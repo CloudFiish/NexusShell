@@ -4,7 +4,7 @@ This file provides guidance to CodeBuddy Code when working with code in this rep
 
 ## 项目概述
 
-Nexus Shell 是一个融合 CLI 强大功能与现代 UI 体验的智能命令行工具,通过垂直分层架构将自然语言指令转换为可视化操作。核心特点是**可插拔的 Agent 架构**,支持多种 Agent CLI (Claude Code、Aider、Cursor CLI 等)。
+Nexus Shell 是一个融合 CLI 强大功能与现代 UI 体验的智能命令行工具,通过垂直分层架构将自然语言指令转换为可视化操作。核心特点是**可插拔的 Agent 架构**,支持多种 Agent CLI (CodeBuddy Code、Claude Code、Aider、Cursor CLI 等)。
 
 ## 核心架构
 
@@ -29,8 +29,8 @@ Nexus Shell 是一个融合 CLI 强大功能与现代 UI 体验的智能命令�
 
 ### 3. 智能内核 (Agent CLI Core)
 - **可插拔设计**: 支持多种 Agent CLI,通过统一接口接入
-- **默认实现**: Claude Code
-- **其他候选**: Aider、Cursor CLI、OpenAI Code Interpreter、自定义 MCP Server
+- **默认实现**: CodeBuddy Code (腾讯云官方智能编码工具)
+- **其他候选**: Claude Code、Aider、Cursor CLI、OpenAI Code Interpreter、自定义 MCP Server
 - **核心职责**:
   - **推理决策 (Model Decision)**: 判断用户意图
   - **Skill 调用**: 通过 MCP 协议调用本地或远程的技能
@@ -65,13 +65,14 @@ Agent CLI 核心是可以替换的,通过统一的适配器接口支持多种 Ag
 
 ### 支持的 Agent 实现
 
-| Agent CLI | 描述 | 集成难度 | 特性支持 |
-|-----------|------|---------|---------|
-| **Claude Code** | 默认实现,完整的 Skill 系统 | 中等 | ⭐⭐⭐⭐⭐ |
-| **Aider** | AI 编程助手,支持 Git 集成 | 低 | ⭐⭐⭐ |
-| **Cursor CLI** | Cursor 的命令行版本 | 低 | ⭐⭐⭐ |
-| **OpenAI Code Interpreter** | OpenAI 的代码执行环境 | 中等 | ⭐⭐⭐⭐ |
-| **Custom MCP Server** | 自定义 MCP 服务器 | 低 | ⭐⭐⭐⭐ |
+| Agent CLI                   | 描述                             | 集成难度 | 特性支持  |
+| --------------------------- | ------------------------------ | ---- | ----- |
+| **CodeBuddy Code**          | **默认实现**,腾讯云官方智能编码工具,完整 MCP 支持 | 低    | ⭐⭐⭐⭐⭐ |
+| **Claude Code**             | Anthropic AI 编程助手,完整的 Skill 系统 | 中等   | ⭐⭐⭐⭐⭐ |
+| **Aider**                   | AI 编程助手,支持 Git 集成              | 低    | ⭐⭐⭐   |
+| **Cursor CLI**              | Cursor 的命令行版本                  | 低    | ⭐⭐⭐   |
+| **OpenAI Code Interpreter** | OpenAI 的代码执行环境                 | 中等   | ⭐⭐⭐⭐  |
+| **Custom MCP Server**       | 自定义 MCP 服务器                    | 低    | ⭐⭐⭐⭐  |
 
 ### Agent 适配器实现 (Rust)
 
@@ -97,6 +98,53 @@ pub trait AgentAdapter {
 
     // 订阅执行事件
     fn subscribe_events(&self) -> EventStream;
+}
+
+// CodeBuddy Code 适配器实现
+pub struct CodeBuddyAdapter {
+    process: Child,
+    control_channel: WebSocket,
+    mcp_servers: Vec<McpServerConfig>,
+    // ...
+}
+
+impl AgentAdapter for CodeBuddyAdapter {
+    async fn start(&mut self) -> Result<(), AgentError> {
+        // 启动 CodeBuddy Code 进程
+        // 建立 WebSocket 控制通道
+        // 发送初始化握手
+    }
+
+    async fn get_skills(&self) -> Result<Vec<SkillInfo>, AgentError> {
+        // 通过 Control Channel 请求 Skill 列表
+        let request = json!({"type": "get_skills"});
+        self.control_channel.send(request).await?;
+        // 解析响应
+    }
+
+    // ... 其他方法实现
+}
+
+// Claude Code 适配器实现
+pub struct ClaudeCodeAdapter {
+    process: Child,
+    control_channel: WebSocket,
+    // ...
+}
+
+impl AgentAdapter for ClaudeCodeAdapter {
+    // 实现 Claude Code 特定的逻辑
+}
+
+// Aider 适配器实现
+pub struct AiderAdapter {
+    process: Child,
+    control_channel: NamedPipe,  // 使用命名管道
+    // ...
+}
+
+impl AgentAdapter for AiderAdapter {
+    // 实现 Aider 特定的逻辑
 }
 ```
 
@@ -186,7 +234,7 @@ Bridge 解析 Control Channel 的 JSON 包 → Semantic Canvas 根据 Skill 元�
 
 ### Agent 适配器的最小侵入原则
 
-对于现有的 Agent CLI (如 Claude Code),通过以下方式最小化修改:
+对于现有的 Agent CLI (如 CodeBuddy Code、Claude Code),通过以下方式最小化修改:
 
 1. **Feature Gate**: 使用条件编译,UI Bridge 功能默认禁用
 2. **独立模块**: UI Bridge 作为独立的 module/crate,通过可选依赖引入
@@ -268,9 +316,9 @@ Semantic Canvas 根据 Skill 的元数据和数据类型选择合适的渲染方
    - 实现 Protocol Parser
 3. **前端基础组件**: Skill Dock、Semantic Canvas 基础框架
 
-### Phase 2: Claude Code 集成 (2-3 周)
-1. **Claude Code 适配器实现**:
-   - 最小侵入式修改 Claude Code(Feature Gate)
+### Phase 2: CodeBuddy Code 集成 (2-3 周)
+1. **CodeBuddy Code 适配器实现**:
+   - 最小侵入式修改 CodeBuddy Code(Feature Gate)
    - 实现 Control Channel 通信
    - 实现 Skill Discovery 和 Execution
 2. **基础渲染器实现**: 表格、代码、日志渲染
@@ -283,8 +331,8 @@ Semantic Canvas 根据 Skill 的元数据和数据类型选择合适的渲染方
 4. **性能优化**: 虚拟滚动、分批渲染
 
 ### Phase 4: 多 Agent 支持 (2-3 周)
-1. **Aider 适配器实现**
-2. **Cursor CLI 适配器实现**
+1. **Claude Code 适配器实现**
+2. **Aider 适配器实现**
 3. **Agent 切换 UI**
 4. **Agent 配置管理**
 
@@ -303,6 +351,12 @@ Semantic Canvas 根据 Skill 的元数据和数据类型选择合适的渲染方
 3. 在 Agent 配置中添加新 Agent 的声明
 4. 在前端添加 Agent 切换选项
 
+**优先实现的 Agent**:
+- **CodeBuddy Code**: 默认实现,优先级最高
+- **Claude Code**: 作为备选 Agent,优先级高
+- **Aider**: Git 集成功能,优先级中
+- **Cursor CLI**: 轻量级备选,优先级低
+
 ### 如何添加新的渲染器
 
 1. 在 `frontend/src/renderers` 目录创建新的渲染组件
@@ -319,10 +373,10 @@ Semantic Canvas 根据 Skill 的元数据和数据类型选择合适的渲染方
 
 ## 术语表
 
-- **Skill**: Agent CLI 可用的技能或工具,如 Claude Code 的 `security-review`、`tdd-workflow`
+- **Skill**: Agent CLI 可用的技能或工具,如 CodeBuddy Code 的 `backend-patterns`、`tdd-workflow`
 - **Session**: 一次 Skill 执行的会话,包含唯一 ID、状态、进度、结果
 - **Control Channel**: Bridge 和 Agent 之间传输结构化数据的专用通道
-- **Agent**: 智能内核,负责推理决策和 Skill 调用,如 Claude Code、Aider
+- **Agent**: 智能内核,负责推理决策和 Skill 调用,如 CodeBuddy Code、Claude Code、Aider
 - **Agent Adapter**: 统一不同 Agent 接口的适配器,实现 `AgentAdapter` trait
 - **Semantic Canvas**: 动态渲染区域,根据数据类型选择合适的渲染模式
 - **Skill Dock**: 左侧边栏,显示可用 Skill 和活跃会话
