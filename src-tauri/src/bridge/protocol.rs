@@ -241,6 +241,14 @@ pub struct McpServerConfig {
     /// 服务器名称
     pub name: String,
 
+    /// 服务器类型 (如 "stdio", "tcp", "http")
+    #[serde(default = "default_server_type")]
+    pub server_type: String,
+
+    /// 服务器状态 (如 "Connected", "Disconnected", "Unknown")
+    #[serde(default = "default_status")]
+    pub status: String,
+
     /// 命令 (如 "npx" 或绝对路径)
     pub command: String,
 
@@ -252,6 +260,16 @@ pub struct McpServerConfig {
 
     /// 是否启用
     pub enabled: bool,
+}
+
+/// 默认服务器类型
+fn default_server_type() -> String {
+    "stdio".to_string()
+}
+
+/// 默认状态
+fn default_status() -> String {
+    "Unknown".to_string()
 }
 
 /// Agent 配置

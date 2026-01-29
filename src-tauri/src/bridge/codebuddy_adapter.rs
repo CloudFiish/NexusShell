@@ -8,16 +8,17 @@ use crate::bridge::protocol::{
     AgentConfig, ControlMessage, RenderMode, SessionId, SkillInfo, SkillInput,
 };
 use crate::bridge::session_manager::{
-    Session, SessionStatus, DataChunk, ProgressInfo, ErrorInfo,
+    Session, SessionManager, SessionStatus, DataChunk, ProgressInfo, ErrorInfo,
 };
 use chrono::Utc;
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, Stream};
 use futures_util::stream;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::io::BufRead;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc, RwLock};
+use tokio::sync::{Mutex, mpsc, RwLock, broadcast};
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream};
 use tokio::net::TcpListener;
@@ -52,7 +53,7 @@ pub struct CodeBuddyAdapter {
     control_channel: Option<Arc<Mutex<WebSocketStream>>>,
 
     /// 响应通道 (用于等待响应)
-    response_channels: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<ControlMessage>>>>,
+    response_channels: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<ControlMessage>>>>,
 
     /// 进程 stdout 接收器
     stdout_rx: Option<Arc<Mutex<mpsc::UnboundedReceiver<String>>>>,
@@ -62,12 +63,50 @@ pub struct CodeBuddyAdapter {
 
     /// 停止信号
     stop_signal: Arc<Mutex<bool>>,
+
+    /// 内部事件发送器 (用于流式事件)
+    event_tx: Arc<broadcast::Sender<AgentEvent>>,
+
+    /// 重试计数器
+    retry_count: Arc<Mutex<u32>>,
+
+    /// 最大重试次数
+    max_retries: u32,
+
+    /// 事件 ID 计数器
+    event_id_counter: Arc<Mutex<u64>>,
+}
+
+// Manual implementation of Clone for CodeBuddyAdapter
+// Note: This clones the shared references but not the actual process
+impl Clone for CodeBuddyAdapter {
+    fn clone(&self) -> Self {
+        CodeBuddyAdapter {
+            process: None, // Cannot clone a process, so set to None
+            config: self.config.clone(),
+            session_manager: self.session_manager.clone(),
+            event_emitter: self.event_emitter.clone(),
+            mcp_manager: self.mcp_manager.clone(),
+            is_running: self.is_running.clone(),
+            control_channel: None, // Cannot clone WebSocket connections
+            response_channels: self.response_channels.clone(),
+            stdout_rx: None, // Cannot clone receivers
+            stderr_rx: None, // Cannot clone receivers
+            stop_signal: self.stop_signal.clone(),
+            event_tx: self.event_tx.clone(),
+            retry_count: self.retry_count.clone(),
+            max_retries: self.max_retries,
+            event_id_counter: self.event_id_counter.clone(),
+        }
+    }
 }
 
 impl CodeBuddyAdapter {
     /// 创建新的 CodeBuddy 适配器
     pub fn new(config: AgentConfig) -> Self {
         let binary_path = config.binary_path.clone();
+        let (event_tx, _) = broadcast::channel(1000);
+        
         CodeBuddyAdapter {
             process: None,
             config,
@@ -80,6 +119,10 @@ impl CodeBuddyAdapter {
             stdout_rx: None,
             stderr_rx: None,
             stop_signal: Arc::new(Mutex::new(false)),
+            event_tx: Arc::new(event_tx),
+            retry_count: Arc::new(Mutex::new(0)),
+            max_retries: 3,
+            event_id_counter: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -134,7 +177,171 @@ impl CodeBuddyAdapter {
         })?;
 
         log::info!("进程已启动，PID: {}", child.id());
+        
+        // 启动进程退出监听
+        self.monitor_process_exit(child.id()).await;
+
         Ok(child)
+    }
+
+    /// 监听进程退出事件
+    async fn monitor_process_exit(&self, pid: u32) {
+        let stop_signal = self.stop_signal.clone();
+        let is_running = self.is_running.clone();
+        let adapter_self = self.clone(); // Use the implemented Clone
+
+        tokio::spawn(async move {
+            log::debug!("启动进程退出监听: PID {}", pid);
+
+            // Monitor the process in a loop
+            loop {
+                // Check if stop signal is triggered
+                if *stop_signal.lock().await {
+                    log::debug!("停止信号已触发，退出进程监听: PID {}", pid);
+                    break;
+                }
+
+                // Check if the process is still running by trying to send a signal (on Unix) or checking existence
+                // On Windows, we'll use a different approach
+                #[cfg(unix)]
+                {
+                    use nix::sys::signal::{kill, Signal};
+                    use nix::unistd::Pid;
+
+                    match kill(Pid::from_raw(pid as i32), Signal::SIGCONT) {
+                        Ok(_) => {
+                            // Process exists, continue monitoring
+                        }
+                        Err(_) => {
+                            // Process doesn't exist anymore
+                            log::error!("检测到进程已退出: PID {}", pid);
+
+                            // Update running status
+                            *is_running.lock().await = false;
+
+                            // Attempt to restart the agent if not intentionally stopped
+                            if !*stop_signal.lock().await {
+                                log::info!("尝试自动重启 Agent...");
+                                if let Err(e) = adapter_self.restart_agent().await {
+                                    log::error!("自动重启失败: {}", e);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                #[cfg(windows)]
+                {
+                    use std::process::Command;
+
+                    // On Windows, check if process exists by running tasklist
+                    let output = Command::new("tasklist")
+                        .args(&["/FI", &format!("PID eq {}", pid)])
+                        .output();
+
+                    if let Ok(output) = output {
+                        let output_str = String::from_utf8_lossy(&output.stdout);
+
+                        // If the process is not in the tasklist, it has exited
+                        if !output_str.contains(&pid.to_string()) {
+                            log::error!("检测到进程已退出: PID {}", pid);
+
+                            // Update running status
+                            *is_running.lock().await = false;
+
+                            // Attempt to restart the agent if not intentionally stopped
+                            if !*stop_signal.lock().await {
+                                log::info!("尝试自动重启 Agent...");
+                                if let Err(e) = adapter_self.restart_agent().await {
+                                    log::error!("自动重启失败: {}", e);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // Sleep before next check
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+
+            log::debug!("进程退出监听结束: PID {}", pid);
+        });
+    }
+
+    /// 尝试重启 Agent
+    async fn restart_agent(&mut self) -> AgentResult<()> {
+        log::info!("尝试重启 Agent");
+        
+        // 获取当前重试次数
+        let mut retry_count = self.retry_count.lock().await;
+        
+        if *retry_count >= self.max_retries {
+            log::error!("达到最大重试次数 ({}), 停止重试", self.max_retries);
+            return Err(AgentError::Other(format!(
+                "达到最大重试次数 ({}), 请检查 Agent 配置",
+                self.max_retries
+            )));
+        }
+        
+        *retry_count += 1;
+        let current_retry = *retry_count;
+        drop(retry_count);
+        
+        log::info!("重试第 {} 次", current_retry);
+        
+        // 指数退避
+        let delay = std::time::Duration::from_millis(1000 * 2_u64.pow(current_retry - 1));
+        tokio::time::sleep(delay).await;
+        
+        // 停止当前 Agent
+        self.stop().await?;
+        
+        // 重新启动
+        self.start().await?;
+        
+        // 重置重试计数器
+        *self.retry_count.lock().await = 0;
+        
+        log::info!("Agent 重启成功");
+        Ok(())
+    }
+
+    /// 尝试重连 WebSocket
+    async fn reconnect_websocket(&mut self) -> AgentResult<()> {
+        log::info!("尝试重连 WebSocket");
+        
+        // 获取当前重试次数
+        let mut retry_count = self.retry_count.lock().await;
+        
+        if *retry_count >= self.max_retries {
+            log::error!("达到最大重试次数 ({}), 停止重连", self.max_retries);
+            return Err(AgentError::Other(format!(
+                "达到最大重试次数 ({}), 请检查网络连接",
+                self.max_retries
+            )));
+        }
+        
+        *retry_count += 1;
+        let current_retry = *retry_count;
+        drop(retry_count);
+        
+        log::info!("重连第 {} 次", current_retry);
+        
+        // 指数退避
+        let delay = std::time::Duration::from_millis(500 * 2_u64.pow(current_retry - 1));
+        tokio::time::sleep(delay).await;
+        
+        // 重新建立 Control Channel
+        let control_channel = self.establish_control_channel().await?;
+        self.control_channel = Some(control_channel);
+        
+        // 重置重试计数器
+        *self.retry_count.lock().await = 0;
+        
+        log::info!("WebSocket 重连成功");
+        Ok(())
     }
 
     /// 监听进程 stdout
@@ -203,56 +410,90 @@ impl CodeBuddyAdapter {
 
         log::info!("Control Channel 监听端口: {}", local_addr.port());
 
-        // 启动 WebSocket 服务器任务
-        let (ws_tx, ws_rx) = mpsc::channel(100);
+        // 创建消息处理通道
+        let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<ControlMessage>();
         let stop_signal = self.stop_signal.clone();
+        let adapter_self = Arc::new(Mutex::new(self.clone_for_spawn()));
 
-        tokio::spawn(async move {
-            // 等待连接
-            match listener.accept().await {
-                Ok((stream, addr)) => {
-                    log::info!("Control Channel 连接来自: {}", addr);
-                    let ws_stream = tokio_tungstenite::accept_async(stream).await;
+        // 启动 WebSocket 服务器任务
+        tokio::spawn({
+            let stop_signal = stop_signal.clone();
+            let adapter_self_clone = adapter_self.clone();
+            let msg_tx_clone = msg_tx.clone();
 
-                    match ws_stream {
-                        Ok(ws) => {
-                            let (mut write, mut read) = ws.split();
-                            let stop_signal = stop_signal.clone();
+            async move {
+                // 等待连接
+                match listener.accept().await {
+                    Ok((stream, addr)) => {
+                        log::info!("Control Channel 连接来自: {}", addr);
+                        let ws_stream = tokio_tungstenite::accept_async(stream).await;
 
-                            // 消息接收循环
-                            let read_task = tokio::spawn(async move {
-                                while !*stop_signal.lock().await {
-                                    match read.next().await {
-                                        Some(Ok(msg)) => {
-                                            if let Message::Text(text) = msg {
-                                                // 解析 ControlMessage
-                                                if let Ok(control_msg) =
-                                                    serde_json::from_str::<ControlMessage>(&text)
-                                                {
-                                                    // 发送到主处理逻辑
-                                                    // TODO: 实现
+                        match ws_stream {
+                            Ok(ws) => {
+                                let (mut write, mut read) = ws.split();
+
+                                // 消息接收循环
+                                let read_task = tokio::spawn(async move {
+                                    let mut counter = 0;
+                                    while !*stop_signal.lock().await {
+                                        match read.next().await {
+                                            Some(Ok(msg)) => {
+                                                if let Message::Text(text) = msg {
+                                                    counter += 1;
+                                                    // 解析 ControlMessage
+                                                    match serde_json::from_str::<ControlMessage>(&text) {
+                                                        Ok(control_msg) => {
+                                                            // 发送到主处理逻辑
+                                                            log::debug!("收到 ControlMessage ({}): {:?}", counter, control_msg);
+
+                                                            // Send to the message processing loop
+                                                            if msg_tx_clone.send(control_msg).is_err() {
+                                                                log::error!("无法发送消息到处理队列");
+                                                                break;
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            log::error!("解析 ControlMessage 失败: {}", e);
+                                                        }
+                                                    }
                                                 }
                                             }
+                                            Some(Err(e)) => {
+                                                log::error!("接收消息错误: {}", e);
+                                                break;
+                                            }
+                                            None => break,
                                         }
-                                        Some(Err(e)) => {
-                                            log::error!("接收消息错误: {}", e);
-                                            break;
-                                        }
-                                        None => break,
                                     }
-                                }
-                            });
+                                });
 
-                            // 等待读取任务完成
-                            read_task.await.ok();
-                        }
-                        Err(e) => {
-                            log::error!("WebSocket 握手失败: {}", e);
+                                // 等待读取任务完成
+                                read_task.await.ok();
+                            }
+                            Err(e) => {
+                                log::error!("WebSocket 握手失败: {}", e);
+                            }
                         }
                     }
+                    Err(e) => {
+                        log::error!("接受连接失败: {}", e);
+                    }
                 }
-                Err(e) => {
-                    log::error!("接受连接失败: {}", e);
+            }
+        });
+
+        // 启动消息处理循环
+        tokio::spawn({
+            let stop_signal = stop_signal.clone();
+            let adapter_self_clone = adapter_self.clone();
+
+            async move {
+                while !*stop_signal.lock().await {
+                    if let Some(msg) = msg_rx.recv().await {
+                        // Process the message using the adapter instance
+                        let adapter = adapter_self_clone.lock().await;
+                        adapter.handle_control_message_sync(msg).await;
+                    }
                 }
             }
         });
@@ -291,24 +532,321 @@ impl CodeBuddyAdapter {
         Ok(())
     }
 
-    /// 等待特定类型的响应
-    async fn wait_for_response(
-        &self,
-        message_type: &str,
-        timeout_ms: u64,
-    ) -> AgentResult<ControlMessage> {
-        // TODO: 实现响应等待逻辑
-        // 使用 timeout 机制
-        tokio::time::timeout(
-            std::time::Duration::from_millis(timeout_ms),
-            async {
-                // 等待特定类型的消息
-                // 这里简化处理
-                Ok(ControlMessage::Heartbeat)
+    /// 处理 Control Channel 消息
+    async fn handle_control_message(&self, message: ControlMessage) {
+        log::debug!("处理 ControlMessage: {:?}", message);
+
+        // Check if this is a response to a pending request
+        match &message {
+            ControlMessage::SkillList { .. } => {
+                // This is a response to a get_skills request
+                self.route_response_to_waiter(message).await;
+                return;
             }
-        )
-        .await
-        .map_err(|_| AgentError::timeout("等待响应超时", timeout_ms))?
+            ControlMessage::ExecutionStart { .. } => {
+                // This is a response to an execute_skill request
+                self.route_response_to_waiter(message).await;
+                return;
+            }
+            _ => {
+                // Not a response message, continue with streaming handling
+            }
+        }
+
+        // Handle streaming messages
+        match message {
+            ControlMessage::DataChunk {
+                session_id,
+                data,
+                is_final,
+                chunk_index,
+            } => {
+                self.handle_data_chunk(session_id, data, is_final, chunk_index).await;
+            }
+            ControlMessage::Progress {
+                session_id,
+                current,
+                total,
+                message: progress_message,
+            } => {
+                self.handle_progress(session_id, current, total, progress_message).await;
+            }
+            ControlMessage::ExecutionComplete {
+                session_id,
+                summary,
+                success,
+            } => {
+                self.handle_execution_complete(session_id, summary, success).await;
+            }
+            ControlMessage::Error {
+                session_id,
+                code,
+                message,
+                suggestion,
+            } => {
+                self.handle_error(session_id, code, message, suggestion).await;
+            }
+            _ => {
+                // 其他消息类型在 wait_for_response 中处理
+                log::debug!("忽略非流式消息: {:?}", message);
+            }
+        }
+    }
+
+    /// 将响应路由到等待的请求
+    async fn route_response_to_waiter(&self, message: ControlMessage) {
+        // Get all response channels
+        let channels_map = self.response_channels.read().await;
+
+        // Send the message to all waiting channels (they will filter by type)
+        // In a more sophisticated implementation, we'd have a way to correlate specific requests/responses
+        for (_, sender) in channels_map.iter() {
+            // Try to send the message, ignore errors if the receiver has been dropped
+            let _ = sender.send(message.clone());
+        }
+    }
+    
+    /// 处理 DataChunk 消息
+    async fn handle_data_chunk(
+        &self,
+        session_id: String,
+        data: Value,
+        is_final: bool,
+        chunk_index: Option<u64>,
+    ) {
+        log::debug!(
+            "处理 DataChunk: session_id={}, is_final={}, chunk_index={:?}",
+            session_id,
+            is_final,
+            chunk_index
+        );
+        
+        // 生成事件 ID
+        let event_id = self.next_event_id().await;
+        
+        // 添加数据块到会话
+        match self
+            .session_manager
+            .add_data_chunk(session_id.clone(), data.clone(), is_final)
+            .await
+        {
+            Ok(index) => {
+                log::debug!("数据块已添加，索引: {}", index);
+                
+                // 发送事件到前端
+                let event = AgentEvent::DataChunk {
+                    event_id,
+                    session_id,
+                    chunk_index: Some(index),
+                    data,
+                    is_final,
+                };
+                
+                let _ = self.event_tx.send(event);
+            }
+            Err(e) => {
+                log::error!("添加数据块失败: {}", e);
+            }
+        }
+    }
+    
+    /// 处理 Progress 消息
+    async fn handle_progress(
+        &self,
+        session_id: String,
+        current: u64,
+        total: u64,
+        message: String,
+    ) {
+        log::debug!(
+            "处理 Progress: session_id={}, current={}, total={}, message={}",
+            session_id,
+            current,
+            total,
+            message
+        );
+        
+        // 生成事件 ID
+        let event_id = self.next_event_id().await;
+        
+        // 更新会话进度
+        match self
+            .session_manager
+            .update_progress(session_id.clone(), current, total, message.clone())
+            .await
+        {
+            Ok(_) => {
+                log::debug!("进度已更新");
+                
+                // 发送事件到前端
+                let event = AgentEvent::Progress {
+                    event_id,
+                    session_id,
+                    current,
+                    total,
+                    message,
+                };
+                
+                let _ = self.event_tx.send(event);
+            }
+            Err(e) => {
+                log::error!("更新进度失败: {}", e);
+            }
+        }
+    }
+    
+    /// 处理 ExecutionComplete 消息
+    async fn handle_execution_complete(
+        &self,
+        session_id: String,
+        summary: Option<String>,
+        success: bool,
+    ) {
+        log::info!(
+            "处理 ExecutionComplete: session_id={}, success={}, summary={:?}",
+            session_id,
+            success,
+            summary
+        );
+        
+        // 生成事件 ID
+        let event_id = self.next_event_id().await;
+        
+        // 设置会话摘要
+        let summary_str = summary.unwrap_or_else(|| {
+            if success {
+                "执行成功".to_string()
+            } else {
+                "执行失败".to_string()
+            }
+        });
+        
+        match self
+            .session_manager
+            .set_summary(session_id.clone(), summary_str.clone(), success)
+            .await
+        {
+            Ok(_) => {
+                log::info!("会话已完成: {}", session_id);
+                
+                // 发送事件到前端
+                let event = AgentEvent::ExecutionComplete {
+                    event_id,
+                    session_id,
+                    summary: summary_str,
+                    success,
+                };
+                
+                let _ = self.event_tx.send(event);
+            }
+            Err(e) => {
+                log::error!("设置摘要失败: {}", e);
+            }
+        }
+    }
+    
+    /// 处理 Error 消息
+    async fn handle_error(
+        &self,
+        session_id: String,
+        code: String,
+        message: String,
+        suggestion: String,
+    ) {
+        log::error!(
+            "处理 Error: session_id={}, code={}, message={}, suggestion={}",
+            session_id,
+            code,
+            message,
+            suggestion
+        );
+        
+        // 生成事件 ID
+        let event_id = self.next_event_id().await;
+        
+        // 设置会话错误
+        match self
+            .session_manager
+            .set_error(session_id.clone(), code.clone(), message.clone(), suggestion.clone())
+            .await
+        {
+            Ok(_) => {
+                log::error!("会话错误已设置: {}", session_id);
+                
+                // 发送事件到前端
+                let event = AgentEvent::Error {
+                    event_id,
+                    session_id,
+                    code,
+                    message,
+                    suggestion,
+                };
+                
+                let _ = self.event_tx.send(event);
+            }
+            Err(e) => {
+                log::error!("设置错误失败: {}", e);
+            }
+        }
+    }
+    
+    /// 生成下一个事件 ID
+    async fn next_event_id(&self) -> u64 {
+        let mut counter = self.event_id_counter.lock().await;
+        *counter += 1;
+        *counter
+    }
+
+    /// 刷新 Skill 列表
+    pub async fn refresh_skills(&self) -> AgentResult<Vec<SkillInfo>> {
+        log::info!("刷新 Skill 列表");
+
+        // 重新同步 MCP 服务器
+        if let Err(e) = self.mcp_manager.sync().await {
+            log::warn!("同步 MCP 服务器失败: {}", e);
+            // 不阻塞刷新，MCP 错误不是致命的
+        }
+
+        // 获取最新的 Skill 列表
+        self.get_skills().await
+    }
+
+    /// 尝试重启 Agent
+    async fn restart_agent(&self) -> AgentResult<()> {
+        log::info!("尝试重启 Agent");
+
+        // 获取当前重试次数
+        let mut retry_count = self.retry_count.lock().await;
+
+        if *retry_count >= self.max_retries {
+            log::error!("达到最大重试次数 ({}), 停止重试", self.max_retries);
+            return Err(AgentError::Other(format!(
+                "达到最大重试次数 ({}), 请检查 Agent 配置",
+                self.max_retries
+            )));
+        }
+
+        *retry_count += 1;
+        let current_retry = *retry_count;
+        drop(retry_count);
+
+        log::info!("重试第 {} 次", current_retry);
+
+        // 指数退避
+        let delay = std::time::Duration::from_millis(1000 * 2_u64.pow(current_retry - 1));
+        tokio::time::sleep(delay).await;
+
+        // 停止当前 Agent
+        self.stop().await?;
+
+        // 重新启动
+        self.start().await?;
+
+        // 重置重试计数器
+        *self.retry_count.lock().await = 0;
+
+        log::info!("Agent 重启成功");
+        Ok(())
     }
 }
 
@@ -466,8 +1004,10 @@ impl AgentAdapter for CodeBuddyAdapter {
             }
 
             // 更新会话的渲染模式
-            // TODO: 更新会话的 render_mode
-
+            self.session_manager
+                .update_render_mode(session_id.clone(), render_mode)
+                .await?;
+            
             log::info!("Skill 执行已启动，Session ID: {}", session_id);
             Ok(session_id)
         } else {
@@ -478,9 +1018,13 @@ impl AgentAdapter for CodeBuddyAdapter {
         }
     }
 
-    fn subscribe_events(&self) -> impl Stream<Item = AgentEvent> + Send {
-        // TODO: 实现事件流
-        // 目前返回空流
-        stream::empty()
+    fn subscribe_events(&self) -> Box<dyn futures::Stream<Item = AgentEvent> + Unpin + Send> {
+        // 返回事件流
+        Box::new(stream::unfold(self.event_tx.subscribe(), |mut rx| async move {
+            match rx.recv().await {
+                Ok(event) => Some((event, rx)),
+                Err(_) => None,
+            }
+        }))
     }
 }

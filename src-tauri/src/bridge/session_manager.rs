@@ -3,6 +3,7 @@
 use crate::bridge::error::{AgentError, AgentResult};
 use crate::bridge::protocol::{SessionId, SkillInfo, RenderMode};
 use crate::bridge::agent_adapter::AgentEvent;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -172,6 +173,8 @@ enum SessionEvent {
     SetError(SessionId, ErrorInfo),
     /// 设置摘要
     SetSummary(SessionId, String, bool),
+    /// 更新渲染模式
+    UpdateRenderMode(SessionId, RenderMode),
     /// 删除会话
     Remove(SessionId),
 }
@@ -244,6 +247,12 @@ impl SessionManager {
                             if session.completed_at.is_none() {
                                 session.completed_at = Some(Utc::now());
                             }
+                        }
+                    }
+                    SessionEvent::UpdateRenderMode(session_id, render_mode) => {
+                        let mut guard = sessions_clone.write().await;
+                        if let Some(session) = guard.get_mut(&session_id) {
+                            session.render_mode = Some(render_mode);
                         }
                     }
                     SessionEvent::Remove(session_id) => {
@@ -369,6 +378,14 @@ impl SessionManager {
         self.event_tx
             .send(SessionEvent::SetSummary(session_id, summary, success))
             .map_err(|_| AgentError::Other("无法发送摘要事件".to_string()))?;
+        Ok(())
+    }
+
+    /// 更新渲染模式
+    pub async fn update_render_mode(&self, session_id: SessionId, render_mode: RenderMode) -> AgentResult<()> {
+        self.event_tx
+            .send(SessionEvent::UpdateRenderMode(session_id, render_mode))
+            .map_err(|_| AgentError::Other("无法发送渲染模式事件".to_string()))?;
         Ok(())
     }
 

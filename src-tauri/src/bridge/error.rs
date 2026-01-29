@@ -245,4 +245,111 @@ impl AgentError {
             AgentError::Other(_) => "UNKNOWN_ERROR",
         }
     }
+
+    /// 获取本地化的错误消息 (中文)
+    pub fn localized_message(&self) -> String {
+        match self {
+            AgentError::ProcessStartFailed { message, .. } => {
+                format!("进程启动失败: {}", message)
+            }
+            AgentError::ProcessExited { exit_code, reason } => {
+                format!(
+                    "进程已退出，退出码: {:?}，原因: {}",
+                    exit_code, reason
+                )
+            }
+            AgentError::ProcessExecutionFailed { message, .. } => {
+                format!("进程执行失败: {}", message)
+            }
+            AgentError::PortConflict { port, .. } => {
+                format!("端口 {} 已被占用", port)
+            }
+            AgentError::CommunicationError { message, .. } => {
+                format!("通信错误: {}", message)
+            }
+            AgentError::WebSocketConnectionFailed { message, .. } => {
+                format!("WebSocket 连接失败: {}", message)
+            }
+            AgentError::WebSocketDisconnected { reason, .. } => {
+                format!("WebSocket 连接断开: {}", reason)
+            }
+            AgentError::MessageSendFailed { message, .. } => {
+                format!("消息发送失败: {}", message)
+            }
+            AgentError::MessageReceiveTimeout { timeout_ms } => {
+                format!("消息接收超时: 超过 {} 毫秒", timeout_ms)
+            }
+            AgentError::ProtocolParseError { message, .. } => {
+                format!("协议解析错误: {}", message)
+            }
+            AgentError::ProtocolError { message, .. } => {
+                format!("协议错误: {}", message)
+            }
+            AgentError::SkillNotFound { skill_name, .. } => {
+                format!("Skill 不存在: {}", skill_name)
+            }
+            AgentError::SkillExecutionFailed { skill_name, reason, .. } => {
+                format!("Skill 执行失败: {}，原因: {}", skill_name, reason)
+            }
+            AgentError::SessionNotFound { session_id, .. } => {
+                format!("会话不存在: {}", session_id)
+            }
+            AgentError::SessionAlreadyExists { session_id, .. } => {
+                format!("会话已存在: {}", session_id)
+            }
+            AgentError::InvalidInput { message, .. } => {
+                format!("输入参数无效: {}", message)
+            }
+            AgentError::McpServerError { message, .. } => {
+                format!("MCP 服务器错误: {}", message)
+            }
+            AgentError::Timeout { message, .. } => {
+                format!("操作超时: {}", message)
+            }
+            AgentError::Io(e) => {
+                format!("IO 错误: {}", e)
+            }
+            AgentError::Json(e) => {
+                format!("JSON 错误: {}", e)
+            }
+            AgentError::Other(msg) => {
+                format!("未知错误: {}", msg)
+            }
+        }
+    }
+
+    /// 获取本地化的建议 (中文)
+    pub fn localized_suggestion(&self) -> String {
+        match self {
+            AgentError::ProcessStartFailed { suggestion, .. } => suggestion.clone(),
+            AgentError::ProcessExited { .. } => {
+                "请检查 Agent 日志，查看进程退出的原因".to_string()
+            }
+            AgentError::ProcessExecutionFailed { suggestion, .. } => suggestion.clone(),
+            AgentError::PortConflict { suggestion, .. } => suggestion.clone(),
+            AgentError::CommunicationError { suggestion, .. } => suggestion.clone(),
+            AgentError::WebSocketConnectionFailed { suggestion, .. } => suggestion.clone(),
+            AgentError::WebSocketDisconnected { suggestion, .. } => suggestion.clone(),
+            AgentError::MessageSendFailed { suggestion, .. } => suggestion.clone(),
+            AgentError::MessageReceiveTimeout { suggestion, .. } => suggestion.clone(),
+            AgentError::ProtocolParseError { suggestion, .. } => suggestion.clone(),
+            AgentError::ProtocolError { suggestion, .. } => suggestion.clone(),
+            AgentError::SkillNotFound { suggestion, .. } => suggestion.clone(),
+            AgentError::SkillExecutionFailed { suggestion, .. } => suggestion.clone(),
+            AgentError::SessionNotFound { suggestion, .. } => suggestion.clone(),
+            AgentError::SessionAlreadyExists { suggestion, .. } => suggestion.clone(),
+            AgentError::InvalidInput { suggestion, .. } => suggestion.clone(),
+            AgentError::McpServerError { suggestion, .. } => suggestion.clone(),
+            AgentError::Timeout { suggestion, .. } => suggestion.clone(),
+            AgentError::Io(_) => {
+                "请检查文件系统权限和磁盘空间".to_string()
+            }
+            AgentError::Json(_) => {
+                "请检查数据格式是否正确".to_string()
+            }
+            AgentError::Other(_) => {
+                "请查看详细日志，联系技术支持".to_string()
+            }
+        }
+    }
 }

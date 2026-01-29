@@ -80,7 +80,7 @@ pub trait AgentAdapter {
     ///
     /// # 返回
     /// 返回事件流，可以异步迭代读取事件。
-    fn subscribe_events(&self) -> impl Stream<Item = AgentEvent> + Send;
+    fn subscribe_events(&self) -> Box<dyn futures::Stream<Item = AgentEvent> + Unpin + Send>;
 }
 
 /// Agent 事件类型

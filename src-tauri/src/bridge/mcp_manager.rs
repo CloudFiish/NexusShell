@@ -164,8 +164,88 @@ impl McpManager {
 
     /// 解析 list 命令的输出
     async fn parse_list_output(&self, output: &str) -> AgentResult<Vec<McpServerConfig>> {
-        // TODO: 实现实际的解析逻辑
-        // 目前返回空列表，等待 CodeBuddy Code MCP 命令的实际输出格式
-        Ok(Vec::new())
+        // CodeBuddy Code MCP list 命令的输出格式示例:
+        // ```
+        // NAME         TYPE      STATUS
+        // filesystem   stdio     Connected
+        // filesystem2  stdio     Disconnected
+        // ```
+        // 或者是 JSON 格式:
+        // ```json
+        // [\n  {\"name\": \"filesystem\", \"type\": \"stdio\", \"status\": \"Connected\"}\n]
+        // ```
+
+        // 尝试解析 JSON 格式
+        if let Ok(json_servers) = serde_json::from_str::<Vec<serde_json::Value>>(output) {
+            let mut servers = Vec::new();
+            for server in json_servers {
+                if let (Some(name), Some(server_type)) = (
+                    server.get("name").and_then(|v| v.as_str()),
+                    server.get("type").and_then(|v| v.as_str()),
+                ) {
+                    let status = server.get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown");
+
+                    servers.push(McpServerConfig {
+                        name: name.to_string(),
+                        server_type: server_type.to_string(),
+                        status: status.to_string(),
+                        command: "".to_string(), // Will be filled later if needed
+                        args: Vec::new(),
+                        env: None,
+                        enabled: true,
+                    });
+                }
+            }
+            return Ok(servers);
+        }
+
+        // 尝试解析表格格式
+        let mut servers = Vec::new();
+        let lines: Vec<&str> = output.lines().collect();
+
+        // 跳过表头 (第一行和第二行，如果是表格格式)
+        let start_idx = if lines.len() >= 2 && lines[1].contains('-') {
+            2
+        } else if lines.len() >= 1 {
+            0
+        } else {
+            return Ok(servers);
+        };
+
+        for line in lines.iter().skip(start_idx) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            // 解析表格行，按空格分割
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() >= 3 {
+                servers.push(McpServerConfig {
+                    name: parts[0].to_string(),
+                    server_type: parts[1].to_string(),
+                    status: parts[2].to_string(),
+                    command: "".to_string(), // Will be filled later if needed
+                    args: Vec::new(),
+                    env: None,
+                    enabled: true,
+                });
+            } else if parts.len() >= 1 {
+                // 至少有名称
+                servers.push(McpServerConfig {
+                    name: parts[0].to_string(),
+                    server_type: "stdio".to_string(),
+                    status: "Unknown".to_string(),
+                    command: "".to_string(),
+                    args: Vec::new(),
+                    env: None,
+                    enabled: true,
+                });
+            }
+        }
+
+        Ok(servers)
     }
 }
