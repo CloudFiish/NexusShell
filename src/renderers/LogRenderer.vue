@@ -1,9 +1,12 @@
 <template>
   <div class="log-renderer">
     <div class="log-container" ref="logContainer">
+      <div v-if="hiddenCount > 0" class="log-info">
+        ... 已隐藏 {{ hiddenCount }} 条早期日志 ...
+      </div>
       <div
-        v-for="(chunk, index) in dataChunks"
-        :key="index"
+        v-for="(chunk, index) in visibleChunks"
+        :key="chunk.received_at + index"
         class="log-entry"
       >
         <span class="log-timestamp">{{ formatTimestamp(chunk.received_at) }}</span>
@@ -14,7 +17,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUpdated, nextTick } from 'vue';
+import { ref, onMounted, onUpdated, nextTick, computed } from 'vue';
 
 interface Props {
   dataChunks: any[];
@@ -26,6 +29,15 @@ const props = withDefaults(defineProps<Props>(), {
 });
 
 const logContainer = ref<HTMLElement>();
+const MAX_LOG_ENTRIES = 1000;
+
+const visibleChunks = computed(() => {
+  const len = props.dataChunks.length;
+  if (len <= MAX_LOG_ENTRIES) return props.dataChunks;
+  return props.dataChunks.slice(len - MAX_LOG_ENTRIES);
+});
+
+const hiddenCount = computed(() => Math.max(0, props.dataChunks.length - MAX_LOG_ENTRIES));
 
 function formatTimestamp(timestamp: string): string {
   const date = new Date(timestamp);
@@ -91,6 +103,14 @@ onUpdated(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 4px;
+}
+
+.log-info {
+  text-align: center;
+  color: #666;
+  padding: 8px 0;
+  font-style: italic;
+  user-select: none;
 }
 
 .log-timestamp {

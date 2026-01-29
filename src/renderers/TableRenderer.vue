@@ -1,15 +1,16 @@
 <template>
   <div class="table-renderer">
-    <div class="table-container">
-      <table class="data-table">
+    <div class="table-container" ref="containerRef" @scroll="handleScroll">
+      <div class="virtual-spacer" :style="{ height: totalHeight + 'px' }"></div>
+      <table class="data-table" :style="{ transform: `translateY(${offsetY}px)` }">
         <thead>
           <tr>
             <th v-for="(header, index) in headers" :key="index">{{ header }}</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(row, rowIndex) in rows" :key="rowIndex">
-            <td v-for="(cell, cellIndex) in row" :key="cellIndex">{{ cell }}</td>
+          <tr v-for="row in visibleRows" :key="row.index">
+            <td v-for="(cell, cellIndex) in row.data" :key="cellIndex">{{ cell }}</td>
           </tr>
         </tbody>
       </table>

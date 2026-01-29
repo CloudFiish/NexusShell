@@ -445,11 +445,12 @@ impl SessionManager {
             }
         }
 
+        let count = to_remove.len();
         for session_id in to_remove {
             self.remove(session_id).await?;
         }
 
-        Ok(to_remove.len())
+        Ok(count)
     }
 
     /// 获取会话数量

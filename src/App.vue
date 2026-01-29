@@ -1,20 +1,54 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, provide } from 'vue'
 import SkillDock from './components/SkillDock.vue'
 import SemanticCanvas from './components/SemanticCanvas.vue'
 import OmniBox from './components/OmniBox.vue'
 
 const loading = ref(true)
 const error = ref<string | null>(null)
+const omniBoxRef = ref()
+
+// Toast Logic
+const toast = ref({ show: false, message: '', type: 'info' as 'info' | 'error' | 'success' })
+let toastTimer: any = null
+
+const showToast = (message: string, type: 'info' | 'error' | 'success' = 'info') => {
+  if (toastTimer) clearTimeout(toastTimer)
+  toast.value = { show: true, message, type }
+  toastTimer = setTimeout(() => {
+    toast.value.show = false
+  }, 3000)
+}
+
+provide('showToast', showToast)
+
+// Global Shortcuts
+const handleGlobalKeydown = (e: KeyboardEvent) => {
+  // Ctrl/Cmd + K to focus OmniBox
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    e.preventDefault()
+    omniBoxRef.value?.focus()
+  }
+}
 
 onMounted(async () => {
   try {
     // 初始化应用
     loading.value = false
+    window.addEventListener('keydown', handleGlobalKeydown)
+    
+    // Global Error Handler
+    window.addEventListener('unhandledrejection', (event) => {
+      showToast(event.reason?.message || '未知错误', 'error')
+    })
   } catch (err) {
     error.value = err instanceof Error ? err.message : '未知错误'
     console.error('应用初始化失败:', err)
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
 })
 </script>
 
@@ -30,7 +64,7 @@ onMounted(async () => {
         </div>
         <h1 class="text-xl font-bold text-white">Nexus Shell</h1>
       </div>
-      <OmniBox />
+      <OmniBox ref="omniBoxRef" />
     </header>
 
     <!-- 主内容区 -->
@@ -60,6 +94,26 @@ onMounted(async () => {
         <SemanticCanvas />
       </main>
     </div>
+
+    <!-- Toast Notification -->
+    <Transition
+      enter-active-class="transition ease-out duration-300"
+      enter-from-class="transform translate-y-2 opacity-0"
+      enter-to-class="transform translate-y-0 opacity-100"
+      leave-active-class="transition ease-in duration-200"
+      leave-from-class="transform translate-y-0 opacity-100"
+      leave-to-class="transform translate-y-2 opacity-0"
+    >
+      <div v-if="toast.show" class="fixed bottom-4 right-4 px-4 py-2 rounded-lg shadow-lg text-white text-sm flex items-center space-x-2 z-50"
+        :class="{
+          'bg-blue-600': toast.type === 'info',
+          'bg-red-600': toast.type === 'error',
+          'bg-green-600': toast.type === 'success'
+        }"
+      >
+        <span>{{ toast.message }}</span>
+      </div>
+    </Transition>
   </div>
 </template>
 

@@ -276,7 +276,7 @@ impl AgentError {
             AgentError::MessageSendFailed { message, .. } => {
                 format!("消息发送失败: {}", message)
             }
-            AgentError::MessageReceiveTimeout { timeout_ms } => {
+            AgentError::MessageReceiveTimeout { timeout_ms, .. } => {
                 format!("消息接收超时: 超过 {} 毫秒", timeout_ms)
             }
             AgentError::ProtocolParseError { message, .. } => {

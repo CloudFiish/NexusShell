@@ -39,12 +39,22 @@ function handleKeyDown(event: KeyboardEvent) {
     handleSubmit()
   }
 }
+const inputRef = ref<HTMLInputElement | null>(null)
+
+function focus() {
+  inputRef.value?.focus()
+}
+
+defineExpose({
+  focus
+})
 </script>
 
 <template>
   <div class="relative w-full max-w-2xl">
     <div class="relative">
       <input
+        ref="inputRef"
         v-model="input"
         type="text"
         :placeholder="placeholderText"

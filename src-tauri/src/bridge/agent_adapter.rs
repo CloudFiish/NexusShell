@@ -80,7 +80,7 @@ pub trait AgentAdapter {
     ///
     /// # 返回
     /// 返回事件流，可以异步迭代读取事件。
-    fn subscribe_events(&self) -> Box<dyn futures::Stream<Item = AgentEvent> + Unpin + Send>;
+    fn subscribe_events(&self) -> std::pin::Pin<Box<dyn futures::Stream<Item = AgentEvent> + Send>>;
 }
 
 /// Agent 事件类型
@@ -91,14 +91,16 @@ pub trait AgentAdapter {
 pub enum AgentEvent {
     /// 流式数据块
     DataChunk {
+        event_id: u64,
         session_id: SessionId,
-        chunk_index: u64,
+        chunk_index: Option<u64>, // Changed to Option to match usage
         data: serde_json::Value,
         is_final: bool,
     },
 
     /// 进度更新
     Progress {
+        event_id: u64,
         session_id: SessionId,
         current: u64,
         total: u64,
@@ -107,14 +109,16 @@ pub enum AgentEvent {
 
     /// 执行错误
     Error {
+        event_id: u64,
         session_id: SessionId,
-        error_code: String,
+        code: String, // Changed from error_code to match usage
         message: String,
         suggestion: String,
     },
 
     /// 执行完成
     ExecutionComplete {
+        event_id: u64,
         session_id: SessionId,
         success: bool,
         summary: String,
@@ -122,6 +126,7 @@ pub enum AgentEvent {
 
     /// 执行开始
     ExecutionStart {
+        event_id: u64,
         session_id: SessionId,
         skill_name: String,
         render_mode: String,

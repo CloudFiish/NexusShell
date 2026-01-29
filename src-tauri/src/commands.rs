@@ -11,7 +11,10 @@ type AgentState = std::sync::Arc<std::sync::Mutex<crate::bridge::CodeBuddyAdapte
 /// 启动 Agent
 #[tauri::command]
 pub async fn start_agent(state: State<'_, AgentState>) -> Result<String, String> {
-    let mut adapter = state.lock().map_err(|e| format!("无法获取 Agent 锁: {}", e))?;
+    let mut adapter = {
+        let guard = state.lock().map_err(|e| format!("无法获取 Agent 锁: {}", e))?;
+        guard.clone()
+    };
     
     adapter
         .start()
@@ -24,7 +27,10 @@ pub async fn start_agent(state: State<'_, AgentState>) -> Result<String, String>
 /// 停止 Agent
 #[tauri::command]
 pub async fn stop_agent(state: State<'_, AgentState>) -> Result<String, String> {
-    let mut adapter = state.lock().map_err(|e| format!("无法获取 Agent 锁: {}", e))?;
+    let mut adapter = {
+        let guard = state.lock().map_err(|e| format!("无法获取 Agent 锁: {}", e))?;
+        guard.clone()
+    };
     
     adapter
         .stop()
@@ -37,7 +43,10 @@ pub async fn stop_agent(state: State<'_, AgentState>) -> Result<String, String> 
 /// 获取 Skill 列表
 #[tauri::command]
 pub async fn get_skills(state: State<'_, AgentState>) -> Result<Vec<SkillInfo>, String> {
-    let adapter = state.lock().map_err(|e| format!("无法获取 Agent 锁: {}", e))?;
+    let adapter = {
+        let guard = state.lock().map_err(|e| format!("无法获取 Agent 锁: {}", e))?;
+        guard.clone()
+    };
     
     adapter
         .get_skills()
@@ -52,7 +61,10 @@ pub async fn execute_skill(
     skill_name: String,
     input: String,
 ) -> Result<SessionId, String> {
-    let adapter = state.lock().map_err(|e| format!("无法获取 Agent 锁: {}", e))?;
+    let adapter = {
+        let guard = state.lock().map_err(|e| format!("无法获取 Agent 锁: {}", e))?;
+        guard.clone()
+    };
     
     let skill_input = SkillInput::Text(input);
     
@@ -75,7 +87,10 @@ pub async fn cancel_session(
 /// 获取所有会话
 #[tauri::command]
 pub async fn get_sessions(state: State<'_, AgentState>) -> Result<Vec<crate::bridge::session_manager::Session>, String> {
-    let adapter = state.lock().map_err(|e| format!("无法获取 Agent 锁: {}", e))?;
+    let adapter = {
+        let guard = state.lock().map_err(|e| format!("无法获取 Agent 锁: {}", e))?;
+        guard.clone()
+    };
     
     let session_manager = adapter.session_manager();
     let sessions = session_manager.list().await;
@@ -89,7 +104,10 @@ pub async fn get_session(
     state: State<'_, AgentState>,
     session_id: String,
 ) -> Result<Option<crate::bridge::session_manager::Session>, String> {
-    let adapter = state.lock().map_err(|e| format!("无法获取 Agent 锁: {}", e))?;
+    let adapter = {
+        let guard = state.lock().map_err(|e| format!("无法获取 Agent 锁: {}", e))?;
+        guard.clone()
+    };
     
     let session_manager = adapter.session_manager();
     let session = session_manager.get(&session_id).await;

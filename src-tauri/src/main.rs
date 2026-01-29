@@ -26,29 +26,32 @@ async fn main() {
 
     // 创建 CodeBuddy 适配器
     let codebuddy_adapter = std::sync::Arc::new(std::sync::Mutex::new(CodeBuddyAdapter::new(agent_config)));
+    let adapter_clone = codebuddy_adapter.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(move |app| {
             // 在应用启动时初始化 Agent
-            let mut adapter = codebuddy_adapter.lock().unwrap();
-
-            // 启动 Agent
-            #[cfg(debug_assertions)]
             {
-                // 在调试模式下，我们暂时不启动真实的 Agent
-                log::warn!("调试模式: 跳过 Agent 启动");
-            }
+                let mut adapter = codebuddy_adapter.lock().unwrap();
 
-            #[cfg(not(debug_assertions))]
-            {
-                if let Err(e) = tauri::async_runtime::block_on(adapter.start()) {
-                    log::error!("启动 CodeBuddy Code 失败: {}", e);
+                // 启动 Agent
+                #[cfg(debug_assertions)]
+                {
+                    // 在调试模式下，我们暂时不启动真实的 Agent
+                    log::warn!("调试模式: 跳过 Agent 启动");
                 }
-            }
+
+                #[cfg(not(debug_assertions))]
+                {
+                    if let Err(e) = tauri::async_runtime::block_on(adapter.start()) {
+                        log::error!("启动 CodeBuddy Code 失败: {}", e);
+                    }
+                }
+            } // Drop lock here
 
             // 将适配器存储到应用状态中
-            app.manage(codebuddy_adapter);
+            app.manage(adapter_clone);
 
             log::info!("Nexus Shell 应用启动成功");
             Ok(())

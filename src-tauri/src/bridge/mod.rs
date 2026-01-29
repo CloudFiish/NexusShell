@@ -7,6 +7,7 @@ pub mod event_emitter;
 pub mod mcp_manager;
 pub mod protocol;
 pub mod session_manager;
+mod check_send;
 
 pub use agent_adapter::AgentAdapter;
 pub use codebuddy_adapter::CodeBuddyAdapter;
