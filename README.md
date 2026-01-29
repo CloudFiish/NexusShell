@@ -34,16 +34,22 @@ CodeBuddy Code Claude Code Aider  MCP Server
 
 ## 项目状态
 
-✅ **Phase 1: 基础架构** - 已完成
-- ✅ 定义 AgentAdapter trait 和数据结构
-- ✅ 实现 Session Manager 和事件发布订阅机制
-- ✅ 创建基础的项目结构和配置文件
+✅ **Phase 1-7: 核心功能开发** - 已完成 (87%)
+- ✅ 基础架构搭建 (AgentAdapter trait、协议定义、会话管理、事件系统)
+- ✅ CodeBuddy Code 适配器实现 (进程管理、WebSocket 通信、Skill 执行)
+- ✅ MCP 服务器管理框架
+- ✅ 错误处理和恢复机制
+- ✅ Tauri Commands 集成
+- ✅ 前端状态管理 (Pinia stores)
+- ✅ 前端组件实现 (OmniBox、SkillDock、SemanticCanvas、渲染器)
 
-🚧 **Phase 2: CodeBuddy Code 集成** - 进行中
-- ✅ 创建 CodeBuddyAdapter 占位符
-- 🔄 实现 CodeBuddy Code 进程启动和通信
-- ⏳ 实现 Skill 发现和执行
-- ⏳ 实现流式数据处理
+⏳ **Phase 8: 测试和优化** - 未开始 (0%)
+- ⏳ 单元测试
+- ⏳ 集成测试
+- ⏳ 性能优化
+- ⏳ 错误场景测试
+
+详细状态请参考 [PROJECT_STATUS_REPORT.md](./PROJECT_STATUS_REPORT.md)。
 
 详细架构请参考 [架构.md](./架构.md) 和 [Control Channel 协议规范](./docs/control-channel-protocol.md)。
 
