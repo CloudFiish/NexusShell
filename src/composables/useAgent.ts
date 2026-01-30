@@ -1,6 +1,7 @@
 // src/composables/useAgent.ts
 
 import { ref, computed } from 'vue';
+import { invoke } from '@tauri-apps/api/core';
 import { useAgentStore } from '@/stores/agent';
 import { useSessionStore } from '@/stores/session';
 import type { Session } from '@/stores/session';
@@ -48,7 +49,7 @@ export function useAgent(): UseAgentReturn {
     }
 
     try {
-      const sessionId = await window.__TAURI__.invoke('execute_skill', {
+      const sessionId = await invoke('execute_skill', {
         skillName,
         input: options.input
       });
@@ -63,7 +64,7 @@ export function useAgent(): UseAgentReturn {
 
   async function cancelSession(sessionId: string): Promise<void> {
     try {
-      await window.__TAURI__.invoke('cancel_session', { sessionId });
+      await invoke('cancel_session', { sessionId });
       console.log(`会话 ${sessionId} 已取消`);
     } catch (e) {
       console.error(`取消会话 ${sessionId} 失败:`, e);
@@ -73,7 +74,7 @@ export function useAgent(): UseAgentReturn {
 
   async function getSessions(): Promise<Session[]> {
     try {
-      const sessions = await window.__TAURI__.invoke('get_sessions');
+      const sessions = await invoke('get_sessions');
       return sessions as Session[];
     } catch (e) {
       console.error('获取会话列表失败:', e);
@@ -83,7 +84,7 @@ export function useAgent(): UseAgentReturn {
 
   async function getSession(sessionId: string): Promise<Session | null> {
     try {
-      const session = await window.__TAURI__.invoke('get_session', { sessionId });
+      const session = await invoke('get_session', { sessionId });
       return session as Session | null;
     } catch (e) {
       console.error(`获取会话 ${sessionId} 失败:`, e);

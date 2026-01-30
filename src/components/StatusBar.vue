@@ -1,24 +1,46 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useAgentStore } from '@/stores/agent'
 
-const agentStatus = ref('Online')
+const agentStore = useAgentStore()
+
+const agentStatus = computed(() => {
+  switch (agentStore.status) {
+    case 'running': return 'Online'
+    case 'starting': return 'Starting...'
+    case 'stopping': return 'Stopping...'
+    case 'error': return 'Error'
+    default: return 'Offline'
+  }
+})
+
+const statusColor = computed(() => {
+  switch (agentStore.status) {
+    case 'running': return 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.6)]'
+    case 'starting': return 'bg-yellow-500 shadow-[0_0_5px_rgba(234,179,8,0.6)]'
+    case 'error': return 'bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.6)]'
+    default: return 'bg-gray-500'
+  }
+})
+
 const currentAgent = ref('CodeBuddy Code')
 const latency = ref('12ms')
 const memoryUsage = ref('42MB')
-
 </script>
 
 <template>
   <div class="status-bar flex items-center justify-between px-3 text-xs select-none">
     <div class="flex items-center space-x-4">
-      <div class="flex items-center space-x-2 item-hover px-2 py-0.5 rounded cursor-pointer">
-        <span class="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.6)]"></span>
+      <div class="flex items-center space-x-2 item-hover px-2 py-0.5 rounded cursor-pointer"
+           @click="agentStore.status === 'idle' ? agentStore.startAgent() : null">
+        <span class="w-2 h-2 rounded-full transition-colors duration-300" :class="statusColor"></span>
         <span class="text-gray-300 font-medium">{{ currentAgent }}</span>
       </div>
       
       <div class="flex items-center space-x-2 text-gray-500">
         <span>STATUS:</span>
         <span class="text-gray-300">{{ agentStatus }}</span>
+        <span v-if="agentStore.error" class="text-red-400 ml-2" :title="agentStore.error">(Error)</span>
       </div>
     </div>
 

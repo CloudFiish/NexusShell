@@ -29,8 +29,16 @@ chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 env_logger = "0.11"
 which = "6.0"
+ndjson = "0.2"
+tokio-util = { version = "0.7", features = ["codec"] }
 [target.'cfg(unix)'.dependencies]
 nix = "0.27"
+
+# CodeBuddy Python SDK integration
+# Note: Python 3.8+ and codebuddy-agent-sdk must be installed
+[target.'cfg(windows)'.dependencies]
+winreg = "0.51"
+pyo3 = { version = "0.20", features = ["auto-initialize"] }
 
 # Tauri 2.0 (需要最新版本)
 # 注意: Tauri 2.0 目前处于 beta/rc 阶段，请使用稳定版本

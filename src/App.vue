@@ -6,9 +6,12 @@ import OmniBox from './components/OmniBox.vue'
 import TitleBar from './components/TitleBar.vue'
 import StatusBar from './components/StatusBar.vue'
 
+import { useAgentStore } from '@/stores/agent'
+
 const loading = ref(true)
 const error = ref<string | null>(null)
 const omniBoxRef = ref()
+const agentStore = useAgentStore()
 
 // Toast Logic
 const toast = ref({ show: false, message: '', type: 'info' as 'info' | 'error' | 'success' })
@@ -36,6 +39,15 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
 onMounted(async () => {
   try {
     // 初始化应用
+    loading.value = true
+    
+    // 检查 Agent 状态
+    const isRunning = await agentStore.checkStatus()
+    if (!isRunning) {
+        console.log('Agent 未运行，尝试启动...')
+        await agentStore.startAgent()
+    }
+    
     loading.value = false
     window.addEventListener('keydown', handleGlobalKeydown)
     

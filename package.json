@@ -6,7 +6,7 @@
   "author": "Nexus Shell Team",
   "license": "MIT",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 1421",
     "build": "vite build",
     "preview": "vite preview",
     "check": "vue-tsc --noEmit",
