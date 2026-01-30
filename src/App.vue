@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, provide } from 'vue'
-import SkillDock from './components/SkillDock.vue'
-import SemanticCanvas from './components/SemanticCanvas.vue'
+import SideToolbar from './components/SideToolbar.vue'
+import WorkspaceGrid from './components/WorkspaceGrid.vue'
 import OmniBox from './components/OmniBox.vue'
+import TitleBar from './components/TitleBar.vue'
+import StatusBar from './components/StatusBar.vue'
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -53,64 +55,69 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-screen bg-gray-900 text-gray-100">
-    <!-- 顶部导航栏 -->
-    <header class="flex items-center justify-between px-6 py-3 bg-gray-800 border-b border-gray-700">
-      <div class="flex items-center space-x-3">
-        <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
+  <div class="flex flex-col h-screen overflow-hidden bg-[url('https://source.unsplash.com/random/1920x1080/?abstract,dark')] bg-cover bg-center">
+    <!-- Backdrop Overlay for Tint -->
+    <div class="absolute inset-0 bg-[#0f172a]/90 backdrop-blur-sm pointer-events-none z-0"></div>
+
+    <div class="relative z-10 flex flex-col h-full">
+      <TitleBar />
+      
+      <div v-if="loading" class="flex items-center justify-center flex-1">
+        <div class="text-center">
+          <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-500 mx-auto"></div>
+          <p class="mt-6 text-indigo-300 text-sm tracking-widest font-mono">SYSTEM INITIALIZATION...</p>
         </div>
-        <h1 class="text-xl font-bold text-white">Nexus Shell</h1>
       </div>
-      <OmniBox ref="omniBoxRef" />
-    </header>
 
-    <!-- 主内容区 -->
-    <div v-if="loading" class="flex items-center justify-center flex-1">
-      <div class="text-center">
-        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-        <p class="mt-4 text-gray-400">正在加载...</p>
+      <div v-else-if="error" class="flex items-center justify-center flex-1">
+        <div class="text-center glass-panel p-8 rounded-2xl">
+          <div class="text-red-500 text-5xl mb-4">⚠️</div>
+          <h2 class="text-xl font-bold text-red-400 mb-2">SYSTEM ERROR</h2>
+          <p class="text-gray-400 text-sm font-mono">{{ error }}</p>
+        </div>
       </div>
-    </div>
 
-    <div v-else-if="error" class="flex items-center justify-center flex-1">
-      <div class="text-center">
-        <div class="text-red-500 text-6xl mb-4">⚠️</div>
-        <h2 class="text-xl font-semibold text-red-400 mb-2">应用启动失败</h2>
-        <p class="text-gray-400">{{ error }}</p>
+      <div v-else class="flex flex-1 overflow-hidden pt-2 pb-2">
+        <!-- 左侧工具栏 -->
+        <SideToolbar />
+
+        <!-- 主区域 -->
+        <div class="flex-1 flex flex-col overflow-hidden mr-4">
+          <!-- 顶部指令栏 (Floating) -->
+          <div class="flex-none flex items-center justify-center py-4">
+            <OmniBox ref="omniBoxRef" />
+          </div>
+
+          <!-- 窗口网格 -->
+          <main class="flex-1 overflow-hidden relative rounded-2xl border border-white/5 glass-panel bg-white/5">
+            <WorkspaceGrid />
+          </main>
+        </div>
       </div>
-    </div>
 
-    <div v-else class="flex flex-1 overflow-hidden">
-      <!-- 左侧边栏 -->
-      <aside class="w-64 bg-gray-800 border-r border-gray-700 flex flex-col">
-        <SkillDock />
-      </aside>
-
-      <!-- 主画布 -->
-      <main class="flex-1 overflow-hidden">
-        <SemanticCanvas />
-      </main>
+      <!-- 底部状态栏 -->
+      <StatusBar class="flex-none bg-black/40 backdrop-blur-md border-t border-white/5" />
     </div>
 
     <!-- Toast Notification -->
     <Transition
       enter-active-class="transition ease-out duration-300"
-      enter-from-class="transform translate-y-2 opacity-0"
-      enter-to-class="transform translate-y-0 opacity-100"
+      enter-from-class="transform translate-y-2 opacity-0 scale-95"
+      enter-to-class="transform translate-y-0 opacity-100 scale-100"
       leave-active-class="transition ease-in duration-200"
-      leave-from-class="transform translate-y-0 opacity-100"
-      leave-to-class="transform translate-y-2 opacity-0"
+      leave-from-class="transform translate-y-0 opacity-100 scale-100"
+      leave-to-class="transform translate-y-2 opacity-0 scale-95"
     >
-      <div v-if="toast.show" class="fixed bottom-4 right-4 px-4 py-2 rounded-lg shadow-lg text-white text-sm flex items-center space-x-2 z-50"
+      <div v-if="toast.show" class="fixed bottom-12 right-6 px-6 py-3 rounded-xl shadow-2xl text-white text-sm font-medium flex items-center space-x-3 z-50 glass-panel border-l-4"
         :class="{
-          'bg-blue-600': toast.type === 'info',
-          'bg-red-600': toast.type === 'error',
-          'bg-green-600': toast.type === 'success'
+          'border-l-blue-500': toast.type === 'info',
+          'border-l-red-500': toast.type === 'error',
+          'border-l-green-500': toast.type === 'success'
         }"
       >
+        <span class="text-lg">
+          {{ toast.type === 'success' ? '✓' : toast.type === 'error' ? '!' : 'ℹ' }}
+        </span>
         <span>{{ toast.message }}</span>
       </div>
     </Transition>
@@ -118,5 +125,5 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* 组件特定样式 */
+/* Scoped styles overrides */
 </style>

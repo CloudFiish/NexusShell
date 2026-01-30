@@ -91,7 +91,7 @@ onUpdated(() => {
   flex: 1;
   overflow-y: auto;
   padding: 12px;
-  background-color: #1e1e1e;
+  background-color: var(--bg-primary);
   color: #d4d4d4;
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   font-size: 13px;
@@ -124,24 +124,6 @@ onUpdated(() => {
   white-space: pre-wrap;
   word-break: break-word;
   flex: 1;
-}
-
-/* Scrollbar styles */
-.log-container::-webkit-scrollbar {
-  width: 8px;
-}
-
-.log-container::-webkit-scrollbar-track {
-  background: #2d2d2d;
-  border-radius: 4px;
-}
-
-.log-container::-webkit-scrollbar-thumb {
-  background: #5a5a5a;
-  border-radius: 4px;
-}
-
-.log-container::-webkit-scrollbar-thumb:hover {
-  background: #6a6a6a;
+  user-select: text;
 }
 </style>

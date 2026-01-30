@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, computed } from 'vue';
 import { highlight, languages } from 'prismjs';
 import 'prismjs/components/prism-javascript';
 import 'prismjs/components/prism-typescript';
@@ -63,9 +63,10 @@ watch(() => props.data, () => {
 .code-renderer {
   height: 100%;
   overflow: auto;
-  background-color: #1e1e1e;
+  background-color: var(--bg-primary);
   padding: 12px;
   border-radius: 4px;
+  user-select: text;
 }
 
 .code-container {

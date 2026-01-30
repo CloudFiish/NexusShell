@@ -21,19 +21,21 @@ function switchTab(index: number) {
 </script>
 
 <template>
-  <div class="flex flex-col h-full bg-gray-900">
+  <div class="flex flex-col h-full" style="background-color: var(--bg-primary)">
     <!-- Tab 栏 -->
-    <div v-if="tabs.length > 0" class="flex items-center bg-gray-800 border-b border-gray-700 px-2">
+    <div v-if="tabs.length > 0" class="flex items-center px-2" style="background-color: var(--bg-secondary); border-bottom: 1px solid var(--border-color)">
       <button
         v-for="(tab, index) in tabs"
         :key="tab.id"
         @click="switchTab(index)"
-        :class="[
-          'flex items-center px-4 py-2 text-sm font-medium border-t-2 transition-colors',
-          activeTab === index
-            ? 'border-blue-600 text-white bg-gray-700'
-            : 'border-transparent text-gray-400 hover:text-white hover:bg-gray-700'
-        ]"
+        class="flex items-center px-4 py-2 text-sm font-medium border-t-2 transition-colors"
+        :style="{
+          backgroundColor: activeTab === index ? 'var(--bg-primary)' : 'transparent',
+          color: activeTab === index ? 'white' : '#9ca3af',
+          borderColor: activeTab === index ? '#2563eb' : 'transparent',
+          borderRight: '1px solid var(--border-color)',
+          borderLeft: '1px solid var(--border-color)'
+        }"
       >
         <span class="truncate">{{ tab.skill_name }}</span>
         <button
@@ -56,7 +58,7 @@ function switchTab(index: number) {
       </div>
 
       <div v-else class="max-w-4xl mx-auto">
-        <div class="bg-gray-800 rounded-lg p-6">
+        <div class="rounded-lg p-6" style="background-color: var(--bg-secondary)">
           <h2 class="text-xl font-bold text-white mb-4">{{ activeSession?.skill_name }}</h2>
           
           <!-- 渲染区域 -->
@@ -66,7 +68,7 @@ function switchTab(index: number) {
             <p>输入: {{ activeSession?.input }}</p>
             
             <!-- TODO: 根据渲染模式选择合适的渲染器 -->
-            <div class="mt-4 p-4 bg-gray-900 rounded-lg font-mono text-sm overflow-auto">
+            <div class="mt-4 p-4 rounded-lg font-mono text-sm overflow-auto" style="background-color: var(--bg-primary)">
               <p class="text-gray-500">// 等待数据流...</p>
             </div>
           </div>
