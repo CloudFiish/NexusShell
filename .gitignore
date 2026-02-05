@@ -41,6 +41,11 @@ dist-ssr
 .env.local
 .env.*.local
 
+# Python virtual environment
+.venv/
+venv/
+ENV/
+
 # Obsidian
 .obsidian/workspace.json
 .obsidian/workspace-mobile.json
