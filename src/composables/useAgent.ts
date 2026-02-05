@@ -10,6 +10,11 @@ export interface ExecuteSkillOptions {
   input: string;
 }
 
+export interface SendInputOptions {
+  sessionId: string;
+  input: string;
+}
+
 export interface UseAgentReturn {
   isReady: computed<boolean>;
   isLoading: computed<boolean>;
@@ -18,6 +23,7 @@ export interface UseAgentReturn {
   stopAgent: () => Promise<void>;
   getSkills: () => Promise<any[]>;
   executeSkill: (skillName: string, options: ExecuteSkillOptions) => Promise<string>;
+  sendInputToSession: (options: SendInputOptions) => Promise<void>;
   cancelSession: (sessionId: string) => Promise<void>;
   getSessions: () => Promise<Session[]>;
   getSession: (sessionId: string) => Promise<Session | null>;
@@ -54,7 +60,28 @@ export function useAgent(): UseAgentReturn {
         input: options.input
       });
       
-      console.log(`Skill ${skillName} 执行已启动，会话 ID: ${sessionId}`);
+      console.log(`[useAgent] Skill ${skillName} 执行已启动，后端返回的会话 ID: ${sessionId}`);
+
+      // 手动确保 Session 在 Store 中存在，避免竞态条件
+      const tempSession: Session = {
+          id: sessionId as string,
+          skill_name: skillName,
+          status: 'pending',
+          input: options.input,
+          created_at: new Date().toISOString(),
+          data_chunks: [],
+          content_blocks: [
+            {
+              type: 'user',
+              text: options.input,
+              timestamp: new Date().toISOString()
+            }
+          ],
+          success: false
+      };
+      console.log(`[useAgent] 创建前端 session:`, tempSession.id);
+      sessionStore.handleSessionCreated(tempSession);
+      
       return sessionId as string;
     } catch (e) {
       console.error(`执行 Skill ${skillName} 失败:`, e);
@@ -92,6 +119,55 @@ export function useAgent(): UseAgentReturn {
     }
   }
 
+  async function sendInputToSession(options: SendInputOptions): Promise<void> {
+    if (!agentStore.isRunning) {
+      throw new Error('Agent 未运行，无法发送输入');
+    }
+
+    const { sessionId, input } = options;
+    
+    try {
+      console.log(`[useAgent] 向会话 ${sessionId} 发送输入:`, input);
+
+      // 获取当前会话
+      const session = sessionStore.getSession(sessionId);
+      if (!session) {
+        throw new Error(`会话 ${sessionId} 不存在`);
+      }
+
+      // 将用户输入添加到 content_blocks
+      const userBlock = {
+        type: 'user' as const,
+        text: input,
+        timestamp: new Date().toISOString()
+      };
+      
+      session.content_blocks = [...session.content_blocks, userBlock];
+      session.status = 'running'; // 更新状态为运行中
+      
+      // 触发响应式更新
+      sessionStore.sessionsMap = new Map(sessionStore.sessionsMap);
+
+      // 调用后端 send_session_input 命令
+      // 后端会使用相同的 skill 执行新的输入，并返回新的 session_id
+      try {
+        const newSessionId = await invoke('send_session_input', {
+          sessionId,
+          input
+        });
+        console.log(`[useAgent] 新会话已创建: ${newSessionId}`);
+      } catch (e) {
+        console.error('[useAgent] send_session_input 失败:', e);
+        throw e;
+      }
+
+      console.log(`[useAgent] 输入已发送到会话 ${sessionId}`);
+    } catch (e) {
+      console.error(`向会话 ${sessionId} 发送输入失败:`, e);
+      throw e;
+    }
+  }
+
   return {
     isReady,
     isLoading,
@@ -100,6 +176,7 @@ export function useAgent(): UseAgentReturn {
     stopAgent,
     getSkills,
     executeSkill,
+    sendInputToSession,
     cancelSession,
     getSessions,
     getSession,

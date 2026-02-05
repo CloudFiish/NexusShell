@@ -6,7 +6,7 @@
  * 提供统一的接口来监听来自 Tauri 后端的事件
  */
 
-import { ref, onUnmounted, type Ref } from 'vue';
+import { ref, onUnmounted, getCurrentInstance, type Ref } from 'vue';
 import { listen as tauriListen, emit as tauriEmit } from '@tauri-apps/api/event';
 
 export type TauriEventListener = (payload: any) => void;
@@ -121,10 +121,12 @@ export function useEvent(): UseEventReturn {
     listeners.clear();
   }
 
-  // 组件卸载时自动清理
-  onUnmounted(() => {
-    removeAllListeners();
-  });
+  // 组件卸载时自动清理 (仅在组件上下文中有效)
+  if (getCurrentInstance()) {
+    onUnmounted(() => {
+      removeAllListeners();
+    });
+  }
 
   return {
     listen,

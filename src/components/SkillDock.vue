@@ -272,7 +272,7 @@ onMounted(() => {
           >
             <div v-show="expandedSessions.has('completed')" class="space-y-0.5">
               <div
-                v-for="session in completedSessions.slice(-10).reverse()"  // 只显示最近 10 个
+                v-for="session in completedSessions.slice(-10).reverse()"
                 :key="session.id"
                 class="group px-4 py-1.5 hover:bg-white/5 cursor-pointer border-l-2 transition-all duration-150"
                 :class="{

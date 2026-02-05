@@ -31,7 +31,7 @@ export interface ErrorInfo {
 }
 
 export interface ContentBlock {
-  type: 'text' | 'thinking' | 'tooluse' | 'toolresult';
+  type: 'text' | 'thinking' | 'tooluse' | 'toolresult' | 'user';
   text?: string;
   thinking?: string;
   signature?: string;
@@ -41,6 +41,7 @@ export interface ContentBlock {
   tool_use_id?: string;
   content?: string;
   is_error?: boolean;
+  timestamp?: string;
 }
 
 export interface Session {
@@ -72,8 +73,12 @@ export interface Session {
 }
 
 export const useSessionStore = defineStore('session', () => {
+  console.log('[Session Store] defineStore 开始执行');
+  
   const sessionsMap = ref<Map<string, Session>>(new Map());
   const activeSessionId = ref<string | null>(null);
+  
+  console.log('[Session Store] ref 已创建');
 
   // 事件监听器清理函数
   let unlistenAgentEvent: (() => void) | null = null;
@@ -124,41 +129,102 @@ export const useSessionStore = defineStore('session', () => {
       return;
     }
 
+    // 使用 Object.assign 更新属性
     Object.assign(session, updates);
+
+    // 如果是更新 content_blocks，确保创建新数组以触发响应式更新
+    if (updates.content_blocks) {
+      session.content_blocks = [...updates.content_blocks];
+    }
+
+    // 触发 Map 更新以确保响应式
+    sessionsMap.value = new Map(sessionsMap.value);
   }
 
   function handleDataChunk(sessionId: string, chunk: DataChunk) {
+    console.log(`[Session Store] handleDataChunk 被调用:`, { sessionId, chunk_index: chunk.index, data_type: typeof chunk.data });
+
     const session = sessionsMap.value.get(sessionId);
     if (!session) {
-      console.warn('Session ' + sessionId + ' not found for data chunk');
+      console.warn('[Session Store] Session ' + sessionId + ' not found for data chunk');
+      console.log('[Session Store] 当前所有 session IDs:', Array.from(sessionsMap.value.keys()));
       return;
     }
+
+    console.log(`[Session Store] 找到 session:`, session.id, `当前 blocks 数量:`, session.content_blocks?.length || 0);
 
     // Initialize content_blocks if not exists
     if (!session.content_blocks) {
       session.content_blocks = [];
     }
 
+    console.log(`[Session Store] 处理数据块:`, chunk.data, `类型:`, typeof chunk.data);
+
     // Convert chunk.data to ContentBlock
     let block: ContentBlock | null = null;
+    
+    // Try to parse string data as JSON first if it looks like an object
     if (typeof chunk.data === 'string') {
+        const trimmed = chunk.data.trim();
+        if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+             try {
+                 const parsed = JSON.parse(chunk.data);
+                 if (typeof parsed === 'object' && parsed !== null) {
+                     chunk.data = parsed; // Update chunk.data to object
+                 }
+             } catch (e) {
+                 // Not valid JSON, treat as text
+             }
+        }
+    }
+
+    if (typeof chunk.data === 'string') {
+      console.log(`[Session Store] 数据是字符串，创建 text block`);
       block = { type: 'text', text: chunk.data };
     } else if (typeof chunk.data === 'object' && chunk.data !== null) {
       const data = chunk.data as any;
-      if (data.type === 'thinking') {
+      console.log(`[Session Store] 数据是对象:`, data);
+      
+      // Robust type detection
+      if (data.type === 'thinking' || (data.thinking && data.signature)) {
+        console.log(`[Session Store] 检测到 thinking block`);
         block = { type: 'thinking', thinking: data.thinking, signature: data.signature };
-      } else if (data.id && data.name && data.input) {
-        block = { type: 'tooluse', ...data };
-      } else if (data.tool_use_id) {
-        block = { type: 'toolresult', ...data };
+      } else if (data.type === 'tooluse' || (data.id && data.name && data.input)) {
+        console.log(`[Session Store] 检测到 tooluse block`);
+        block = { 
+            type: 'tooluse', 
+            id: data.id,
+            name: data.name,
+            input: data.input
+        };
+      } else if (data.type === 'toolresult' || data.tool_use_id) {
+        console.log(`[Session Store] 检测到 toolresult block`);
+        block = { 
+            type: 'toolresult', 
+            tool_use_id: data.tool_use_id,
+            content: data.content,
+            is_error: data.is_error
+        };
+      } else if (data.type === 'text' || data.text) {
+        console.log(`[Session Store] 检测到 text block (from object)`);
+        block = { type: 'text', text: data.text || JSON.stringify(data) };
       } else {
-        // Default to text representation of json
-        block = { type: 'text', text: JSON.stringify(data) };
+        console.log(`[Session Store] 默认转换为 text block`);
+        // Default to text representation of json object
+        block = { type: 'text', text: JSON.stringify(data, null, 2) };
       }
     }
 
     if (block) {
-      session.content_blocks.push(block);
+      // Avoid duplicate blocks if possible (optional optimization)
+      // 创建新数组以触发 Vue 响应式更新
+      session.content_blocks = [...session.content_blocks, block];
+      console.log(`[Session Store] 生成 ContentBlock:`, block.type, `总块数:`, session.content_blocks.length);
+
+      // 触发 Map 更新以确保响应式
+      sessionsMap.value = new Map(sessionsMap.value);
+    } else {
+        console.warn(`[Session Store] 无法转换数据块:`, chunk.data);
     }
 
     // 检查内存使用
@@ -207,6 +273,8 @@ export const useSessionStore = defineStore('session', () => {
     }
 
     session.progress = progress;
+    // 触发 Map 更新以确保响应式
+    sessionsMap.value = new Map(sessionsMap.value);
   }
 
   function handleError(sessionId: string, error: ErrorInfo) {
@@ -221,6 +289,8 @@ export const useSessionStore = defineStore('session', () => {
     if (!session.completed_at) {
       session.completed_at = error.occurred_at;
     }
+    // 触发 Map 更新以确保响应式
+    sessionsMap.value = new Map(sessionsMap.value);
   }
 
   function handleExecutionComplete(sessionId: string, summary: string, success: boolean) {
@@ -240,6 +310,9 @@ export const useSessionStore = defineStore('session', () => {
     if (!session.completed_at) {
       session.completed_at = new Date().toISOString();
     }
+
+    // 触发 Map 更新以确保响应式
+    sessionsMap.value = new Map(sessionsMap.value);
 
     console.log(`[Session Store] Session ${sessionId} 执行完成:`, {
       success,
@@ -262,8 +335,8 @@ export const useSessionStore = defineStore('session', () => {
       return;
     }
 
-    // 将缓冲区的数据块添加到会话
-    session.data_chunks.push(...buffer);
+    // 将缓冲区的数据块添加到会话（创建新数组以触发响应式更新）
+    session.data_chunks = [...session.data_chunks, ...buffer];
 
     // 清空缓冲区
     buffer.length = 0;
@@ -273,6 +346,9 @@ export const useSessionStore = defineStore('session', () => {
       clearTimeout(batchTimers.get(sessionId)!);
       batchTimers.delete(sessionId);
     }
+
+    // 触发 Map 更新以确保响应式
+    sessionsMap.value = new Map(sessionsMap.value);
 
     console.debug(`[Session Store] Session ${sessionId} 批处理已刷新: ${session.data_chunks.length} 个数据块`);
   }
@@ -360,15 +436,24 @@ export const useSessionStore = defineStore('session', () => {
   function handleAgentEvent(event: any) {
     const { type, session_id, ...rest } = event;
 
+    console.log(`[Session Store] handleAgentEvent 被调用:`, { type, session_id });
+
     if (!session_id) {
       console.warn('[Session Store] 事件缺少 session_id:', event);
       return;
     }
 
+    // 检查 session 是否存在
+    const sessionExists = sessionsMap.value.has(session_id);
+    console.log(`[Session Store] session_id ${session_id} 是否存在:`, sessionExists);
+    if (!sessionExists) {
+      console.log('[Session Store] 当前所有 session IDs:', Array.from(sessionsMap.value.keys()));
+    }
+
     switch (type) {
       case 'execution_start': {
         const { skill_name } = rest;
-        console.log(`[Session Store] 执行开始: ${session_id} - ${skill_name}`);
+        console.log(`🚀 [Session ${session_id}] 执行开始, Skill: ${skill_name}`);
         // 更新 session 状态为 running
         handleSessionUpdated(session_id, {
           status: 'running',
@@ -379,7 +464,7 @@ export const useSessionStore = defineStore('session', () => {
 
       case 'data_chunk': {
         const { chunk_index, data, is_final } = rest;
-        console.log(`[Session Store] 数据块: ${session_id} - chunk ${chunk_index}`);
+        console.log(`[Session Store] 收到 data_chunk 事件:`, { session_id, chunk_index, is_final, data_type: typeof data });
 
         const chunk: DataChunk = {
           index: chunk_index || 0,
@@ -395,7 +480,7 @@ export const useSessionStore = defineStore('session', () => {
 
       case 'progress': {
         const { current, total, message } = rest;
-        console.log(`[Session Store] 进度: ${session_id} - ${current}/${total} - ${message}`);
+        console.log(`⏳ [Session ${session_id}] 进度: ${Math.round((current / total) * 100)}% - ${message}`);
 
         const progress: ProgressInfo = {
           current,
@@ -411,7 +496,10 @@ export const useSessionStore = defineStore('session', () => {
 
       case 'execution_complete': {
         const { success, summary } = rest;
-        console.log(`[Session Store] 执行完成: ${session_id} - ${success}`);
+        console.log(`✅ [Session ${session_id}] 执行完成 (Success: ${success})`);
+        if (summary) console.log('Summary:', summary);
+        console.groupEnd();
+        
         handleExecutionComplete(session_id, summary || '', success);
         break;
       }
@@ -533,6 +621,21 @@ export const useSessionStore = defineStore('session', () => {
     console.log('[Session Store] 事件监听器已清理');
   }
 
+  // Initialize event listeners immediately (BEFORE return to ensure it runs)
+  console.log('[Session Store] 即将调用 setupEventListeners');
+  setupEventListeners();
+  console.log('[Session Store] Store 初始化完成，事件监听器已设置');
+
+  // Clean up is generally not needed for a global store, but we can expose the method if needed
+  // If HMR (Hot Module Replacement) causes issues, we might need to handle cleanup here.
+  if (import.meta.hot) {
+    import.meta.hot.dispose(() => {
+      cleanupEventListeners();
+    });
+  }
+  
+  console.log('[Session Store] defineStore 执行完毕');
+  
   return {
     sessionsMap,
     activeSessionId,
@@ -565,14 +668,4 @@ export const useSessionStore = defineStore('session', () => {
     setupEventListeners,
     cleanupEventListeners,
   };
-
-  // 在 store 初始化时自动设置事件监听
-  onMounted(() => {
-    setupEventListeners();
-  });
-
-  // 在 store 销毁时清理事件监听
-  onUnmounted(() => {
-    cleanupEventListeners();
-  });
 });

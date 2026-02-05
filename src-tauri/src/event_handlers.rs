@@ -49,18 +49,20 @@ impl AgentEventHandler {
             let mut stream = event_stream;
 
             while let Some(event) = stream.next().await {
-                log::debug!("收到 Agent 事件: {:?}", event);
+                log::info!("收到 Agent 事件: {:?}", event);
 
                 // 将事件转换为 JSON 并发送到前端
                 match Self::convert_event_to_json(&event) {
                     Ok(event_json) => {
+                        log::info!("事件 JSON: {}", event_json);
+
                         // 发送到前端
-                        match app_handle.emit("agent-event", event_json) {
+                        match app_handle.emit("agent-event", &event_json) {
                             Ok(_) => {
-                                // log::debug!("事件已发送到前端: agent-event");
+                                log::info!("✅ 事件已发送到前端: agent-event");
                             }
                             Err(e) => {
-                                log::error!("发送事件到前端失败: {}", e);
+                                log::error!("❌ 发送事件到前端失败: {}", e);
                             }
                         }
 

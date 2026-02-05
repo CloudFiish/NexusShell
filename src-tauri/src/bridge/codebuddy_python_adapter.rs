@@ -76,6 +76,9 @@ pub struct CodeBuddyPythonAdapter {
     /// 内部事件发送器
     event_tx: Arc<broadcast::Sender<AgentEvent>>,
 
+    /// 当前活动的 Session ID
+    active_session_id: Arc<Mutex<Option<String>>>,
+
     /// 重试计数器
     retry_count: Arc<Mutex<u32>>,
 
@@ -94,10 +97,22 @@ impl CodeBuddyPythonAdapter {
     pub fn new(config: AgentConfig) -> Self {
         let mut python_config = PythonAdapterConfig::default();
 
+        // Check for debug script override
+        let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let debug_script = project_root.join("scripts").join("debug_bridge.py");
+        if debug_script.exists() {
+            log::info!("[PythonAdapter] Found debug script at {:?}, overriding embedded content.", debug_script);
+            if let Ok(content) = std::fs::read_to_string(&debug_script) {
+                python_config.script_content = content;
+            }
+        }
+
         // Check for venv python in common locations relative to CWD
         let venv_paths = vec![
             PathBuf::from(".venv").join("Scripts").join("python.exe"), // Windows
             PathBuf::from(".venv").join("bin").join("python"),         // Unix
+            PathBuf::from("src-tauri").join(".venv").join("Scripts").join("python.exe"), // Windows (src-tauri subdir)
+            PathBuf::from("src-tauri").join(".venv").join("bin").join("python"),         // Unix (src-tauri subdir)
         ];
 
         for path in venv_paths {
@@ -120,6 +135,7 @@ impl CodeBuddyPythonAdapter {
             stop_signal: Arc::new(Mutex::new(false)),
             stdin_tx: Arc::new(Mutex::new(None)),
             event_tx: Arc::new(event_tx),
+            active_session_id: Arc::new(Mutex::new(None)),
             retry_count: Arc::new(Mutex::new(0)),
             max_retries: 3,
             event_id_counter: Arc::new(Mutex::new(0)),
@@ -327,7 +343,7 @@ impl CodeBuddyPythonAdapter {
             }
 
             SDKMessage::System(_) => {
-                log::debug!("收到系统消息: {:?}", message);
+                log::info!("收到系统消息: {:?}", message);
             }
 
             SDKMessage::User(_) => {
@@ -340,33 +356,40 @@ impl CodeBuddyPythonAdapter {
 
     /// 处理 Assistant 消息
     async fn handle_assistant_message(&self, message: crate::bridge::protocol::AssistantMessage) -> AgentResult<()> {
-        log::debug!("处理 Assistant 消息");
+        log::info!("处理 Assistant 消息，content 长度: {}", message.content.len());
 
         let event_id = self.next_event_id().await;
-        // Session ID 应该从消息中获取，但 AssistantMessage 可能没有直接的 session_id
-        // 如果没有，我们可能需要维护当前活动的 session_id
-        // 这里暂时生成一个新的或使用默认值
-        let session_id = "current_session".to_string(); 
+        // 获取当前活动的 session_id
+        let session_id = {
+            let guard = self.active_session_id.lock().await;
+            guard.clone().unwrap_or_else(|| "current_session".to_string())
+        };
+
+        log::info!("使用 session_id: {}", session_id);
 
         // 为每个 ContentBlock 创建 AgentEvent
-        for block in &message.content {
+        for (index, block) in message.content.iter().enumerate() {
             match block {
                 ContentBlock::Text(text_block) => {
+                    log::info!("发送文本块: {}", &text_block.text[..text_block.text.len().min(50)]);
                     let event = AgentEvent::DataChunk {
                         event_id,
                         session_id: session_id.clone(),
-                        chunk_index: Some(0),
+                        chunk_index: Some(index as u64),
                         data: serde_json::json!(text_block.text),
                         is_final: false,
                     };
-                    let _ = self.event_tx.send(event);
+                    if let Err(e) = self.event_tx.send(event) {
+                        log::error!("发送事件失败: {}", e);
+                    }
                 }
 
                 ContentBlock::Thinking(thinking_block) => {
+                    log::info!("发送思考块");
                     let event = AgentEvent::DataChunk {
                         event_id,
                         session_id: session_id.clone(),
-                        chunk_index: Some(0),
+                        chunk_index: Some(index as u64),
                         data: serde_json::json!({
                             "type": "thinking",
                             "thinking": thinking_block.thinking,
@@ -374,29 +397,37 @@ impl CodeBuddyPythonAdapter {
                         }),
                         is_final: false,
                     };
-                    let _ = self.event_tx.send(event);
+                    if let Err(e) = self.event_tx.send(event) {
+                        log::error!("发送事件失败: {}", e);
+                    }
                 }
 
                 ContentBlock::ToolUse(tool_use) => {
+                    log::info!("发送工具使用块: {}", tool_use.name);
                     let event = AgentEvent::DataChunk {
                         event_id,
                         session_id: session_id.clone(),
-                        chunk_index: Some(0),
+                        chunk_index: Some(index as u64),
                         data: serde_json::json!(tool_use),
                         is_final: false,
                     };
-                    let _ = self.event_tx.send(event);
+                    if let Err(e) = self.event_tx.send(event) {
+                        log::error!("发送事件失败: {}", e);
+                    }
                 }
 
                 ContentBlock::ToolResult(tool_result) => {
+                    log::info!("发送工具结果块");
                     let event = AgentEvent::DataChunk {
                         event_id,
                         session_id: session_id.clone(),
-                        chunk_index: Some(0),
+                        chunk_index: Some(index as u64),
                         data: serde_json::json!(tool_result),
                         is_final: false,
                     };
-                    let _ = self.event_tx.send(event);
+                    if let Err(e) = self.event_tx.send(event) {
+                        log::error!("发送事件失败: {}", e);
+                    }
                 }
             }
         }
@@ -528,6 +559,7 @@ impl CodeBuddyPythonAdapter {
             stop_signal: self.stop_signal.clone(),
             stdin_tx: self.stdin_tx.clone(),
             event_tx: self.event_tx.clone(),
+            active_session_id: self.active_session_id.clone(),
             retry_count: self.retry_count.clone(),
             max_retries: self.max_retries,
             event_id_counter: self.event_id_counter.clone(),
@@ -552,6 +584,7 @@ impl Clone for CodeBuddyPythonAdapter {
             stop_signal: self.stop_signal.clone(),
             stdin_tx: self.stdin_tx.clone(),
             event_tx: self.event_tx.clone(),
+            active_session_id: self.active_session_id.clone(),
             retry_count: self.retry_count.clone(),
             max_retries: self.max_retries,
             event_id_counter: self.event_id_counter.clone(),
@@ -571,26 +604,87 @@ impl AgentAdapter for CodeBuddyPythonAdapter {
     }
 
     async fn get_skills(&self) -> AgentResult<Vec<SkillInfo>> {
-        log::info!("获取 Skill 列表");
+        log::info!("从 Python SDK 获取 Skill 列表");
 
-        // 从 MCP 服务器获取 Skill 信息
-        let mcp_servers = self.mcp_manager.list_all().await;
+        // 通过 Python 桥接脚本获取技能列表
+        let config = json!({
+            "command": "get_skills"
+        });
 
-        let skills: Vec<SkillInfo> = mcp_servers.iter()
-            .map(|server| SkillInfo {
-                name: server.name.clone(),
-                description: format!("MCP 服务器: {}", server.name),
-                default_render: RenderMode::Json,
-                supported_renders: vec![RenderMode::Json, RenderMode::Table],
-                input_schema: None,
-                output_schema: None,
-                category: Some("mcp".to_string()),
-                requires_filesystem: server.server_type == "stdio",
-                requires_network: server.server_type == "tcp",
-            })
-            .collect();
+        let mut cmd = Command::new(&self.python_config.python_path);
+        for (key, value) in &self.config.env {
+            cmd.env(key, value);
+        }
 
-        log::info!("获取到 {} 个 Skill", skills.len());
+        // 使用调试脚本 (如果存在)
+        let script_path = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("scripts")
+            .join("debug_bridge.py");
+
+        if script_path.exists() {
+            log::info!("使用调试脚本: {:?}", script_path);
+            cmd.arg(script_path);
+        } else {
+            cmd.arg("-c");
+            cmd.arg(&self.python_config.script_content);
+        }
+
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+
+        let mut child = cmd.spawn().map_err(|e| AgentError::process_start_failed(e.to_string()))?;
+
+        // 发送配置到 stdin
+        if let Some(mut stdin) = child.stdin.take() {
+            let config_str = config.to_string();
+            log::debug!("发送 get_skills 配置到 Python: {}", config_str);
+            stdin.write_all(config_str.as_bytes()).await.map_err(|e| AgentError::Io(e))?;
+            stdin.write_all(b"\n").await.map_err(|e| AgentError::Io(e))?;
+            drop(stdin);
+        }
+
+        // 读取 stdout
+        let stdout = child.stdout.take().ok_or(AgentError::process_start_failed("No stdout"))?;
+        let reader = BufReader::new(stdout);
+        let mut lines = tokio::io::AsyncBufReadExt::lines(reader);
+
+        let mut skills = Vec::new();
+
+        while let Ok(Some(line)) = lines.next_line().await {
+            log::info!("Python stdout: {}", line);
+            
+            if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
+                if msg.get("type").and_then(|t| t.as_str()) == Some("skills") {
+                    if let Some(skills_array) = msg.get("skills").and_then(|s| s.as_array()) {
+                        for skill_value in skills_array {
+                            let skill = SkillInfo {
+                                name: skill_value.get("name").and_then(|n| n.as_str()).unwrap_or("unknown").to_string(),
+                                description: skill_value.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+                                default_render: RenderMode::Markdown,
+                                supported_renders: vec![RenderMode::Markdown, RenderMode::Json],
+                                input_schema: None,
+                                output_schema: None,
+                                category: skill_value.get("category").and_then(|c| c.as_str()).map(|s| s.to_string()),
+                                requires_filesystem: skill_value.get("requires_filesystem").and_then(|r| r.as_bool()).unwrap_or(false),
+                                requires_network: skill_value.get("requires_network").and_then(|r| r.as_bool()).unwrap_or(true),
+                            };
+                            skills.push(skill);
+                        }
+                    }
+                    break;
+                } else if msg.get("type").and_then(|t| t.as_str()) == Some("error") {
+                    let error_msg = msg.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error");
+                    return Err(AgentError::Other(format!("获取 Skill 列表失败: {}", error_msg)));
+                }
+            }
+        }
+
+        // 等待子进程结束
+        let _ = child.wait().await;
+
+        log::info!("从 Python SDK 获取到 {} 个 Skill", skills.len());
         Ok(skills)
     }
 
@@ -599,7 +693,6 @@ impl AgentAdapter for CodeBuddyPythonAdapter {
         skill_name: &str,
         input: SkillInput,
     ) -> AgentResult<SessionId> {
-        // ... implementation ...
         log::info!("执行 Skill: {} -> {}", skill_name, input.as_text());
 
         // 1. 生成唯一的 session_id
@@ -622,6 +715,7 @@ impl AgentAdapter for CodeBuddyPythonAdapter {
 
         // 4. 发送提示词到 Python SDK
         let config = json!({
+            "command": "query",
             "session_id": session_id,
             "prompt": input.as_text(),
             "options": {
@@ -634,43 +728,83 @@ impl AgentAdapter for CodeBuddyPythonAdapter {
         for (key, value) in &self.config.env {
             cmd.env(key, value);
         }
-        cmd.arg("-c");
-        cmd.arg(&self.python_config.script_content);
+
+        // 强制使用调试脚本 (如果存在)
+        let script_path = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("scripts")
+            .join("debug_bridge.py");
+
+        if script_path.exists() {
+            log::info!("使用调试脚本: {:?}", script_path);
+            cmd.arg(script_path);
+        } else {
+            cmd.arg("-c");
+            cmd.arg(&self.python_config.script_content);
+        }
+
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
-        
+
         let mut child = cmd.spawn().map_err(|e| AgentError::process_start_failed(e.to_string()))?;
-        
+
+        // 5. 发送配置到 stdin,然后关闭它以触发 Python 处理
         if let Some(mut stdin) = child.stdin.take() {
             let config_str = config.to_string();
+            log::debug!("发送配置到 Python: {}", config_str);
             stdin.write_all(config_str.as_bytes()).await.map_err(|e| AgentError::Io(e))?;
-            // stdin is dropped here, closing it, which triggers EOF for python script
+            stdin.write_all(b"\n").await.map_err(|e| AgentError::Io(e))?;
+            // 立即关闭 stdin 以触发 EOF,让 Python 知道输入结束
+            drop(stdin);
         }
-        
+
+        // 提取 stdout 和 stderr,避免移动 child 的问题
         let stdout = child.stdout.take().ok_or(AgentError::process_start_failed("No stdout"))?;
-        
+        let stderr = child.stderr.take().ok_or(AgentError::process_start_failed("No stderr"))?;
+
         // Monitor stdout in background and send events
         let adapter_self = self.clone();
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = tokio::io::AsyncBufReadExt::lines(reader);
             while let Ok(Some(line)) = lines.next_line().await {
-                 if let Ok(msg) = serde_json::from_str::<SDKMessage>(&line) {
-                    let _ = adapter_self.handle_sdk_message(msg).await;
-                 }
+                log::info!("Python stdout line: {}", line);
+                if let Ok(msg) = serde_json::from_str::<SDKMessage>(&line) {
+                    log::info!("成功解析 SDK 消息: {:?}", msg);
+                    if let Err(e) = adapter_self.handle_sdk_message(msg).await {
+                        log::error!("处理 SDK 消息失败: {}", e);
+                    }
+                } else {
+                    log::warn!("无法解析 JSON 消息: {}", line);
+                }
+            }
+            log::info!("Python stdout 监听结束");
+        });
+
+        // Monitor stderr
+        tokio::spawn(async move {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log::info!("Python stderr: {}", line);
+            }
+            log::info!("Python stderr 监听结束");
+        });
+
+        // 等待进程退出 (在后台,不阻塞返回)
+        let session_id_for_wait = session_id.clone();
+        tokio::spawn(async move {
+            if let Ok(status) = child.wait().await {
+                log::info!("[Session {}] Python 进程退出,状态: {:?}", session_id_for_wait, status);
             }
         });
-        
-        // Monitor stderr
-        let stderr = child.stderr.take().ok_or(AgentError::process_start_failed("No stderr"))?;
-        tokio::spawn(async move {
-             let reader = BufReader::new(stderr);
-             let mut lines = reader.lines();
-             while let Ok(Some(line)) = lines.next_line().await {
-                 log::debug!("Python stderr: {}", line);
-             }
-        });
+
+        // 保存当前活动的 session_id
+        {
+            let mut guard = self.active_session_id.lock().await;
+            *guard = Some(session_id.clone());
+        }
 
         // 发送执行开始事件
         let event_id = self.next_event_id().await;
@@ -680,7 +814,9 @@ impl AgentAdapter for CodeBuddyPythonAdapter {
             skill_name: skill_name.to_string(),
             render_mode: "text".to_string(),
         };
-        let _ = self.event_tx.send(event);
+        if let Err(e) = self.event_tx.send(event) {
+            log::error!("发送执行开始事件失败: {}", e);
+        }
 
         log::info!("Skill 执行已启动,Session ID: {}", session_id);
         Ok(session_id)

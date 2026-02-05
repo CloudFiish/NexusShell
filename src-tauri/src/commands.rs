@@ -117,3 +117,41 @@ pub async fn is_agent_running(state: State<'_, PythonAdapterState>) -> Result<bo
     let adapter = state.lock().await;
     Ok(adapter.is_running().await)
 }
+
+/// 向现有会话发送输入
+#[tauri::command]
+pub async fn send_session_input(
+    state: State<'_, PythonAdapterState>,
+    session_id: String,
+    input: String,
+) -> Result<String, String> {
+    let adapter = state.lock().await;
+    
+    log::info!("向会话 {} 发送输入: {}", session_id, input);
+    
+    // 获取会话信息
+    let session_manager = adapter.session_manager();
+    let session = session_manager.get(&session_id).await;
+    
+    match session {
+        Some(s) => {
+            log::info!("找到会话: {:?}, skill: {}", session_id, s.skill_name);
+            
+            // 使用相同的 skill 执行新的输入
+            let skill_input = SkillInput::Text(input);
+            
+            // 调用 execute_skill 来处理输入
+            match adapter.execute_skill(&s.skill_name, skill_input).await {
+                Ok(new_session_id) => {
+                    log::info!("新会话已创建: {}", new_session_id);
+                    Ok(new_session_id)
+                }
+                Err(e) => {
+                    log::error!("执行 skill 失败: {}", e);
+                    Err(format!("执行失败: {}", e))
+                }
+            }
+        }
+        None => Err(format!("会话 {} 不存在", session_id)),
+    }
+}

@@ -88,6 +88,11 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   async function getSkills() {
+    // 如果状态不是 running，先尝试检查状态
+    if (!isRunning.value) {
+      await checkStatus();
+    }
+
     if (!isRunning.value) {
       throw new Error('Agent 未运行，无法获取 Skill 列表');
     }
@@ -132,6 +137,28 @@ export const useAgentStore = defineStore('agent', () => {
       throw e;
     } finally {
       loading.value = false;
+    }
+  }
+
+  async function checkStatus() {
+    try {
+      const isRunning = await invoke('is_agent_running');
+      if (isRunning) {
+        status.value = 'running';
+        // 如果是从未知状态变为 running，可能需要获取 skills
+        if (skills.value.length === 0) {
+           // 异步获取 skills，不阻塞
+           getSkills().catch(e => console.error('自动获取 Skills 失败:', e));
+        }
+      } else {
+        status.value = 'idle';
+      }
+      return isRunning;
+    } catch (e) {
+      console.error('检查 Agent 状态失败:', e);
+      // 不改变当前状态，或者是 error?
+      // status.value = 'error'; 
+      return false;
     }
   }
 
@@ -207,6 +234,10 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
+  // 在 store 初始化时立即设置事件监听
+  setupEventListeners();
+  console.log('[Agent Store] 事件监听器已设置');
+
   return {
     status,
     skills,
@@ -219,6 +250,7 @@ export const useAgentStore = defineStore('agent', () => {
     skillCount,
     startAgent,
     stopAgent,
+    checkStatus,
     getSkills,
     refreshSkills,
     clearError,
@@ -227,16 +259,4 @@ export const useAgentStore = defineStore('agent', () => {
     setupEventListeners,
     cleanupEventListeners,
   };
-
-  // 在 store 初始化时自动设置事件监听
-  onMounted(() => {
-    console.log('[Agent Store] 组件已挂载，设置事件监听器');
-    setupEventListeners();
-  });
-
-  // 在 store 销毁时清理事件监听
-  onUnmounted(() => {
-    console.log('[Agent Store] 组件已卸载，清理事件监听器');
-    cleanupEventListeners();
-  });
 });

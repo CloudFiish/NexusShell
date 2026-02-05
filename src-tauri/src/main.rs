@@ -41,13 +41,7 @@ async fn main() {
                 let adapter_for_start = codebuddy_adapter.clone();
 
                 // 启动 Agent
-                #[cfg(debug_assertions)]
-                {
-                    // 在调试模式下，我们暂时不启动真实的 Agent
-                    log::warn!("调试模式: 跳过 Agent 启动");
-                }
-
-                #[cfg(not(debug_assertions))]
+                // 无论调试模式还是发布模式都启动 Agent
                 {
                     // 使用 spawn 代替 block_on，避免运行时嵌套错误
                     tauri::async_runtime::spawn(async move {
@@ -88,6 +82,7 @@ async fn main() {
             commands::get_sessions,
             commands::get_session,
             commands::is_agent_running,
+            commands::send_session_input,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
